@@ -34,11 +34,11 @@ DAMAGE_RANDOM_BONUS = (0, 1)
 
 STARTING_RESOURCES = {"money": 16, "steel": 8, "technology": 3}
 CITY_PRODUCTION_PER_LEVEL = {"money": 2, "steel": 2, "technology": 1}
-CITY_BASE_HP = 15
-CITY_HP_PER_LEVEL = 3
-CITY_MAX_HP = 30
+CITY_BASE_HP = 150
+CITY_HP_PER_LEVEL = 30
+CITY_MAX_HP = 300
 CITY_MAX_LEVEL = 6
-CITY_HEAL_PER_TURN = 2
+CITY_HEAL_PER_TURN = 10
 
 
 def city_hp_for_level(level):
@@ -95,15 +95,4 @@ STARTING_UNITS = (
     ("Tank", "poland", (6, 4)),
     ("Infantry", "poland", (7, 4)),
     ("Artillery", "soviet", (8, 5)),
-)
-
-TERRITORY_LAYOUT = (
-    "LLLLPPPGGM",
-    "LLLLPPGGMM",
-    "LLLPPGGGMM",
-    "LLPPPGGWWM",
-    "LLPPGGGWWM",
-    "LPPGGGWWMM",
-    "LPPGGGWWMM",
-    "LPPGGGWWMM",
 )

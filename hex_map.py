@@ -5,18 +5,38 @@ import colorsys
 from game_config import NEUTRAL, PLAYER, TERRAIN_COLORS
 
 
+INK_COLOR = "#202c27"
+
+
+def _desaturate_color(color, factor=0.82):
+    channels = tuple(int(color[offset:offset + 2], 16) / 255.0
+                     for offset in (1, 3, 5))
+    hue, saturation, brightness = colorsys.rgb_to_hsv(*channels)
+    muted = colorsys.hsv_to_rgb(hue, saturation * factor, brightness)
+    return "#%02x%02x%02x" % tuple(int(channel * 255 + 0.5) for channel in muted)
+
+
+def _mix_colors(first, second, second_weight):
+    first_channels = tuple(int(first[offset:offset + 2], 16) for offset in (1, 3, 5))
+    second_channels = tuple(int(second[offset:offset + 2], 16) for offset in (1, 3, 5))
+    return "#%02x%02x%02x" % tuple(
+        int(first_channel * (1 - second_weight) + second_channel * second_weight + 0.5)
+        for first_channel, second_channel in zip(first_channels, second_channels))
+
+
 def _country_colors(index, faction, color=None):
     if faction == NEUTRAL:
         return "#b8b8b8", "#686868"
 
     if color:
+        color = _desaturate_color(color.lower())
         channels = tuple(int(color[offset:offset + 2], 16) for offset in (1, 3, 5))
         mark = "#%02x%02x%02x" % tuple(int(channel * 0.62) for channel in channels)
-        return color.lower(), mark
+        return color, mark
 
     hue = (index * 0.618033988749895) % 1.0
-    fill_rgb = colorsys.hsv_to_rgb(hue, 0.2 + (index % 4) * 0.035, 0.96)
-    mark_rgb = colorsys.hsv_to_rgb(hue, 0.62, 0.58)
+    fill_rgb = colorsys.hsv_to_rgb(hue, (0.2 + (index % 4) * 0.035) * 0.82, 0.96)
+    mark_rgb = colorsys.hsv_to_rgb(hue, 0.62 * 0.82, 0.58)
     fill = "#%02x%02x%02x" % tuple(int(channel * 255) for channel in fill_rgb)
     mark = "#%02x%02x%02x" % tuple(int(channel * 255) for channel in mark_rgb)
     return fill, mark
@@ -34,7 +54,6 @@ class HexMapView(tk.Canvas):
         self.min_zoom = 0.04
         self.pan_x = 0.0
         self.pan_y = 0.0
-        self.terrain_images = {}
         self.country_fill_colors = {}
         self.country_mark_colors = {}
         self.hex_items = {}
@@ -46,6 +65,7 @@ class HexMapView(tk.Canvas):
         self.attack_target = None
         self.low_detail = False
         self.drag_origin = None
+        self.last_drag_position = None
         self.dragged = False
         self.bind("<Configure>", lambda event: self.draw())
         self.bind("<ButtonPress-1>", self._on_press)
@@ -100,54 +120,41 @@ class HexMapView(tk.Canvas):
                            center_y + radius * math.sin(angle)))
         return points
 
-    def _terrain_image(self, terrain, size):
-        key = (terrain, size)
-        if key in self.terrain_images:
-            return self.terrain_images[key]
-
-        image = tk.PhotoImage(master=self, width=size, height=size)
-
-        def span(y, left, right, color):
-            left = max(0, left)
-            right = min(size, right)
-            if left < right and 0 <= y < size:
-                image.put(color, to=(left, y, right, y + 1))
-
-        def triangle(center_x, top, bottom, half_width, color):
-            height = max(1, bottom - top)
-            for y in range(max(0, top), min(size, bottom)):
-                reach = max(1, int(half_width * (y - top + 1) / height))
-                span(y, center_x - reach, center_x + reach + 1, color)
-
+    def _draw_terrain_symbol(self, terrain, center_x, center_y):
+        scale = max(0.55, min(1.25, self.zoom))
+        width = max(1, self.zoom)
         if terrain == "Forest":
-            for center_x, top, width in ((size // 3, size // 5, size // 4),
-                                         (size * 2 // 3, size // 3, size // 4)):
-                triangle(center_x, top, size * 3 // 4, width, "#32684c")
-                triangle(center_x, top + size // 5, size * 3 // 4,
-                         max(1, width - 2), "#5c9865")
-                trunk_width = max(1, size // 9)
-                for y in range(size * 3 // 4, size * 9 // 10):
-                    span(y, center_x - trunk_width, center_x + trunk_width + 1, "#76543a")
+            color = "#3e5e49"
+            for offset in (-3, 2):
+                self.create_polygon(
+                    center_x + offset * scale, center_y - 5 * scale,
+                    center_x + (offset - 4) * scale, center_y + 3 * scale,
+                    center_x + (offset + 4) * scale, center_y + 3 * scale,
+                    fill=color, outline="", tags="terrain-icon")
         elif terrain == "Hill":
-            triangle(size // 3, size // 5, size * 4 // 5, size // 3, "#8e7950")
-            triangle(size * 2 // 3, size // 3, size * 4 // 5, size // 3, "#b69b64")
-            triangle(size // 3, size // 5, size // 2, size // 7, "#f2edda")
+            self.create_line(center_x - 8 * scale, center_y + 4 * scale,
+                             center_x - 2 * scale, center_y - 4 * scale,
+                             center_x + 2 * scale, center_y + 1 * scale,
+                             center_x + 6 * scale, center_y - 4 * scale,
+                             center_x + 9 * scale, center_y + 4 * scale,
+                             fill="#756b50", width=width,
+                             joinstyle=tk.ROUND, tags="terrain-icon")
         elif terrain == "Water":
-            wave_color = "#397f9a"
-            for row in (size // 3, size // 2, size * 2 // 3):
-                for col in range(size // 8, size * 7 // 8):
-                    offset = (col // max(2, size // 4)) % 2
-                    span(row + offset, col, col + 2, wave_color)
+            for offset in (-2, 3):
+                self.create_line(center_x - 7 * scale, center_y + offset * scale,
+                                 center_x - 3 * scale, center_y + (offset - 1) * scale,
+                                 center_x + scale, center_y + offset * scale,
+                                 center_x + 5 * scale, center_y + (offset - 1) * scale,
+                                 fill="#357987", width=width, smooth=True,
+                                 tags="terrain-icon")
         else:
-            grass_color = "#66864c"
-            for col, row in ((size // 4, size // 2), (size // 2, size // 3),
-                             (size * 3 // 4, size * 3 // 5)):
-                span(row, col, col + 1, grass_color)
-                span(row + 1, col - 1, col + 2, grass_color)
-                span(row + 2, col, col + 1, grass_color)
-
-        self.terrain_images[key] = image
-        return image
+            self.create_line(center_x - 5 * scale, center_y + 3 * scale,
+                             center_x - 2 * scale, center_y - 2 * scale,
+                             center_x, center_y + 3 * scale,
+                             center_x + 3 * scale, center_y - 3 * scale,
+                             center_x + 6 * scale, center_y + 3 * scale,
+                             fill="#66764f", width=width,
+                             joinstyle=tk.ROUND, tags="terrain-icon")
 
     def draw(self):
         if not self.winfo_exists():
@@ -155,7 +162,7 @@ class HexMapView(tk.Canvas):
         self.delete("all")
         self.hex_items = {}
         radius = self.radius * self.zoom
-        low_detail = 2 * radius <= 20
+        low_detail = 2 * radius <= 40
         self.low_detail = low_detail
         country_data = self.model.countries
         if isinstance(country_data, dict):
@@ -175,9 +182,12 @@ class HexMapView(tk.Canvas):
 
         for position, terrain in self.model.tiles.items():
             center_x, center_y = self._screen_center(position)
-            city = self.model.city_for_hex(position)
-            fill = (self.country_fill_colors.get(city["owner"], "#e4e3d9")
-                    if city else TERRAIN_COLORS["Water"] if terrain == "Water" else "#e4e3d9")
+            territory_city = self.model.city_for_hex(position)
+            terrain_color = TERRAIN_COLORS[terrain]
+            fill = (_mix_colors(terrain_color,
+                                self.country_fill_colors.get(territory_city["owner"],
+                                                             terrain_color), 0.55)
+                    if territory_city else terrain_color)
             outline = "#f3f1e8"
             line_width = max(1, self.zoom * 2.0)
             if not low_detail and position == self.selected_hex:
@@ -191,39 +201,67 @@ class HexMapView(tk.Canvas):
                 fill=fill, outline="" if low_detail else outline,
                 width=0 if low_detail else line_width)
 
-            if not low_detail and self.zoom >= 0.22:
-                icon_size = max(8, int(24 * self.zoom))
-                self.create_image(center_x, center_y,
-                                  image=self._terrain_image(terrain, icon_size),
-                                  tags="terrain-icon")
+            if not low_detail and self.zoom >= 0.28:
+                self._draw_terrain_symbol(terrain, center_x, center_y)
 
             city = self.model.cities.get(position)
             if city and low_detail:
                 owner_color = self.country_mark_colors.get(city["owner"], "#47745f")
                 marker_radius = max(1.5, 5 * self.zoom)
                 marker_y = center_y - max(1.0, 4 * self.zoom)
-                self.create_rectangle(center_x - marker_radius, marker_y - marker_radius,
-                                 center_x + marker_radius, marker_y + marker_radius,
-                                 fill=owner_color, outline="#fff9e9", width=1,
-                                 tags="overview-city")
+                self.create_polygon(center_x, marker_y - marker_radius,
+                                    center_x + marker_radius, marker_y,
+                                    center_x, marker_y + marker_radius,
+                                    center_x - marker_radius, marker_y,
+                                    fill=owner_color, outline="#fff9e9", width=1,
+                                    tags="overview-city")
             elif city and not low_detail:
                 owner_color = self.country_mark_colors.get(city["owner"], "#47745f")
-                self.create_oval(center_x - 5 * self.zoom, center_y - 14 * self.zoom,
-                                 center_x + 5 * self.zoom, center_y - 4 * self.zoom,
-                                 fill=owner_color, outline="#fff9e9", width=1)
-                self.create_text(center_x, center_y - 20 * self.zoom, text=city["name"],
-                                 fill="#202c27",
-                                 font=("Segoe UI", max(7, int(9 * self.zoom)), "bold"))
-                city_bar_width = 23 * self.zoom
-                city_bar_y = center_y - 2 * self.zoom
-                self.create_rectangle(center_x - city_bar_width / 2, city_bar_y,
-                                      center_x + city_bar_width / 2, city_bar_y + 3 * self.zoom,
-                                      fill="#f2eee2", outline="")
-                self.create_rectangle(
-                    center_x - city_bar_width / 2, city_bar_y,
-                    center_x - city_bar_width / 2 + city_bar_width * city["health"] /
-                    city["max_health"], city_bar_y + 3 * self.zoom,
-                    fill=owner_color, outline="")
+                icon_y = center_y - 10 * self.zoom
+                icon_scale = max(0.45, self.zoom)
+                icon_width = 6 * icon_scale
+                roof_top = icon_y - 7 * icon_scale
+                body_top = icon_y - 2 * icon_scale
+                body_bottom = icon_y + 5 * icon_scale
+                self.create_polygon(center_x - icon_width, body_top,
+                                    center_x, roof_top,
+                                    center_x + icon_width, body_top,
+                                    fill=owner_color, outline=INK_COLOR,
+                                    width=max(1, self.zoom), tags="city-marker")
+                self.create_rectangle(center_x - 4.5 * icon_scale, body_top,
+                                      center_x + 4.5 * icon_scale, body_bottom,
+                                      fill="#f4f1e7", outline=INK_COLOR,
+                                      width=max(1, self.zoom), tags="city-marker")
+                self.create_rectangle(center_x - icon_scale, center_y - 8 * self.zoom,
+                                      center_x + icon_scale, body_bottom,
+                                      fill=owner_color, outline="", tags="city-marker")
+                if self.zoom >= 0.6:
+                    label = "{}  Lv{}".format(city["name"], city["city_level"])
+                    label_font = ("Segoe UI", max(7, int(9 * self.zoom)), "bold")
+                    label_item = self.create_text(
+                        center_x, center_y - 25 * self.zoom, text=label,
+                        fill="#202c27", font=label_font, tags="city-label")
+                    bounds = self.bbox(label_item)
+                    if bounds:
+                        left, top, right, bottom = bounds
+                        background = self.create_rectangle(
+                            left - 4, top - 2, right + 4, bottom + 2,
+                            fill="#f4f1e7", outline="#c9c8bb", width=1,
+                            tags="city-label")
+                        self.tag_lower(background, label_item)
+                if (position == self.selected_hex and
+                        self.model.unit_at(position) is None):
+                    city_bar_width = 23 * self.zoom
+                    city_bar_y = center_y + 2 * self.zoom
+                    self.create_rectangle(center_x - city_bar_width / 2, city_bar_y,
+                                          center_x + city_bar_width / 2,
+                                          city_bar_y + 3 * self.zoom,
+                                          fill="#f2eee2", outline="")
+                    self.create_rectangle(
+                        center_x - city_bar_width / 2, city_bar_y,
+                        center_x - city_bar_width / 2 + city_bar_width * city["health"] /
+                        city["max_health"], city_bar_y + 3 * self.zoom,
+                        fill=owner_color, outline="")
 
             unit = self.model.unit_at(position)
             unit_faction = self.model.faction_for(unit.owner) if unit else None
@@ -269,8 +307,7 @@ class HexMapView(tk.Canvas):
                                       center_x - bar_width / 2 + bar_width * unit.hp / unit.max_hp,
                                       bar_y + 3 * self.zoom, fill=health_color, outline="")
 
-        if low_detail:
-            self._draw_overview_boundaries()
+        self._draw_city_territory_boundaries()
 
         for edge in (() if low_detail else self.model.river_edges):
             first, second = tuple(edge)
@@ -319,7 +356,8 @@ class HexMapView(tk.Canvas):
                                         width=max(1, self.zoom), tags="attack-range")
 
     def _on_press(self, event):
-        self.drag_origin = (event.x, event.y, self.pan_x, self.pan_y)
+        self.drag_origin = (event.x, event.y)
+        self.last_drag_position = (event.x, event.y)
         self.dragged = False
         self.paint_dragging = False
         self.last_painted_hex = None
@@ -333,7 +371,7 @@ class HexMapView(tk.Canvas):
     def _on_drag(self, event):
         if not self.drag_origin:
             return
-        start_x, start_y, start_pan_x, start_pan_y = self.drag_origin
+        start_x, start_y = self.drag_origin
         delta_x = event.x - start_x
         delta_y = event.y - start_y
         if abs(delta_x) + abs(delta_y) > 4:
@@ -345,9 +383,13 @@ class HexMapView(tk.Canvas):
                 self.on_hex_drag(position)
             return
         if self.dragged:
-            self.pan_x = start_pan_x + delta_x
-            self.pan_y = start_pan_y + delta_y
-            self.draw()
+            last_x, last_y = self.last_drag_position
+            move_x = event.x - last_x
+            move_y = event.y - last_y
+            self.pan_x += move_x
+            self.pan_y += move_y
+            self.move("all", move_x, move_y)
+            self.last_drag_position = (event.x, event.y)
 
     def _on_release(self, event):
         if not self.low_detail and not self.dragged:
@@ -355,15 +397,16 @@ class HexMapView(tk.Canvas):
             if position is not None:
                 self.on_hex_click(position)
         self.drag_origin = None
+        self.last_drag_position = None
         self.paint_dragging = False
         self.last_painted_hex = None
 
-    def _draw_overview_boundaries(self):
+    def _draw_city_territory_boundaries(self):
         edges = {}
         owners = {}
         for position, terrain in self.model.tiles.items():
             city = self.model.city_for_hex(position)
-            owner = city["owner"] if city else (
+            owner = city["position"] if city else (
                 "__water__" if terrain == "Water" else "__unassigned__")
             owners[position] = owner
             center_x, center_y = self._screen_center(position)
@@ -381,15 +424,17 @@ class HexMapView(tk.Canvas):
             if len(edge_sides) != 2:
                 continue
             first_side, second_side = edge_sides
-            if owners[first_side[0]] == owners[second_side[0]]:
+            first_owner = owners[first_side[0]]
+            second_owner = owners[second_side[0]]
+            if (first_owner == second_owner or first_owner == "__water__" or
+                    second_owner == "__water__"):
                 continue
-            mark_color = self.country_mark_colors.get(owners[first_side[0]], "#66736a")
-            if owners[first_side[0]] == "__water__":
-                mark_color = self.country_mark_colors.get(owners[second_side[0]], "#66736a")
             self.create_line(first_side[1][0], first_side[1][1],
                              first_side[2][0], first_side[2][1],
-                             fill=mark_color, width=max(1, 2 * self.zoom),
-                             tags="overview-boundary")
+                             fill="#5c685f",
+                             width=(max(1, 2 * self.zoom) if self.low_detail else
+                                    max(1, 1.5 * self.zoom)),
+                             tags="city-territory-boundary")
 
     def _on_wheel(self, event):
         factor = 1.12 if event.delta > 0 else 1.0 / 1.12

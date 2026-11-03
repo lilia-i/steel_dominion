@@ -1,11 +1,12 @@
+import os
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
-from game_config import ENEMY, NEUTRAL, PLAYER, UNIT_TYPES
+from game_config import ENEMY, NEUTRAL, PLAYER
 from game_model import GameModel
+from game_dialogs import RecruitDialog, SettingsDialog, UnitInfoDialog
 from hex_map import HexMapView
 from map_data import load_map_file
-from ui_helpers import ScrollableFrame
 
 
 INK = "#202c27"
@@ -19,20 +20,26 @@ class GameApp(object):
         self.root = root
         self.root.title("Steel Dominion | Hex Campaign")
         self.root.geometry("1280x820")
-        self.root.minsize(900, 620)
+        self.root.minsize(640, 420)
         self.root.configure(bg=PAPER)
 
+        self.maps_directory = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "maps")
+        self.current_map_path = os.path.join(self.maps_directory, "default_map.json")
+        self.current_map_name = "Default Map"
         self.map_data = None
         self.model = GameModel()
         self.player_country_id = self.model.player_country_id
         self.pending_player_country_id = self.player_country_id
         self.campaign_started = False
+        self.debug_mode = False
         self.model.phase = "setup"
         self.resource_country_id = self.player_country_id
         self.selected_hex = (2, 4)
         self.selected_unit = None
         self.attack_target = None
         self.result_shown = False
+        self.history = []
         self.message = "Choose your country, then start the campaign."
         self._build_ui()
         self._log("Choose a country to begin the campaign.")
@@ -44,144 +51,90 @@ class GameApp(object):
             style.theme_use("clam")
         except tk.TclError:
             pass
-        style.configure("TFrame", background=PAPER)
-        style.configure("TLabel", background=PAPER, foreground=INK, font=("Segoe UI", 10))
         style.configure("Muted.TLabel", foreground=MUTED, font=("Segoe UI", 9))
         style.configure("TButton", padding=(9, 7), font=("Segoe UI", 9, "bold"))
         style.configure("Accent.TButton", background=GREEN, foreground="white")
         style.map("Accent.TButton", background=[("active", "#365b49"), ("disabled", "#aab5ad")])
+        style.configure("MapIcon.TButton", padding=(0, 0), font=("Segoe UI", 8, "bold"))
+        style.configure("MapAction.TButton", padding=(2, 1), font=("Segoe UI", 8, "bold"),
+                        background=GREEN, foreground="white")
+        style.map("MapAction.TButton",
+                  background=[("active", "#365b49"), ("disabled", "#aab5ad")])
         style.configure("TCombobox", padding=5)
 
-        header = tk.Frame(self.root, bg=INK, height=76)
-        header.pack(fill="x")
-        header.pack_propagate(False)
-        brand = tk.Frame(header, bg=INK)
-        brand.pack(side="left", padx=22, pady=12)
-        tk.Label(brand, text="S", bg="#d0a44c", fg=INK, width=2,
-                 font=("Georgia", 16, "bold")).pack(side="left", padx=(0, 12))
-        title_box = tk.Frame(brand, bg=INK)
-        title_box.pack(side="left")
-        tk.Label(title_box, text="Steel Dominion", bg=INK, fg="#f5f2e8",
-                 font=("Georgia", 17, "bold")).pack(anchor="w")
-        tk.Label(title_box, text="EUROPEAN THEATER  /  1942", bg=INK, fg="#a9b3a9",
-                 font=("Consolas", 9)).pack(anchor="w", pady=(2, 0))
-
-        self.stat_vars = {}
-        stats = tk.Frame(header, bg=INK)
-        stats.pack(side="right", padx=24)
-        for key, label in (("turn", "TURN"), ("cities", "CITIES"), ("money", "MONEY"),
-                   ("steel", "STEEL"), ("technology", "TECH")):
-            box = tk.Frame(stats, bg=INK)
-            box.pack(side="left", padx=14, pady=14)
-            tk.Label(box, text=label, bg=INK, fg="#a9b3a9",
-                     font=("Consolas", 9)).pack(anchor="w")
-            variable = tk.StringVar(value="-")
-            self.stat_vars[key] = variable
-            tk.Label(box, textvariable=variable, bg=INK, fg="#f5f2e8",
-                     font=("Consolas", 14, "bold")).pack(anchor="w", pady=(3, 0))
-
-        body = ttk.Panedwindow(self.root, orient="horizontal")
-        body.pack(fill="both", expand=True, padx=14, pady=(14, 12))
-        map_frame = ttk.Frame(body)
-        sidebar_pane = ttk.Frame(body, width=286)
-        body.add(map_frame, weight=4)
-        body.add(sidebar_pane, weight=1)
-        body.bind("<Configure>", lambda event: self._set_initial_sidebar_width(), add="+")
-        self.main_splitter = body
-        self._initial_sidebar_sash_set = False
-        map_heading = ttk.Frame(map_frame)
-        map_heading.pack(fill="x", pady=(0, 9))
-        ttk.Label(map_heading, text="STRATEGIC MAP", font=("Segoe UI", 11, "bold")).pack(side="left")
-        ttk.Label(map_heading, text="Wheel: zoom  |  Drag: pan  |  Gold ring: attack ready",
-              style="Muted.TLabel").pack(side="right")
+        self.stat_vars = {key: tk.StringVar(value="-")
+                          for key in ("money", "steel", "technology")}
         self.map_view = HexMapView(
-            map_frame, self.model, self._on_hex_click,
-            bg="#dfe7df", highlightthickness=1, highlightbackground="#d2d6cd", cursor="fleur")
+            self.root, self.model, self._on_hex_click,
+            bg="#dfe7df", highlightthickness=0, cursor="fleur")
         self.map_view.pack(fill="both", expand=True)
 
-        sidebar_scroll = ScrollableFrame(sidebar_pane, canvas_bg=PAPER)
-        sidebar_scroll.pack(fill="both", expand=True)
-        sidebar = sidebar_scroll.content
-        self.sidebar_scroll = sidebar_scroll
+        resource_strip = tk.Frame(self.root, bg="#d9ddd5", height=36,
+                                  highlightthickness=1, highlightbackground="#c9cec4")
+        resource_strip.place(x=0, y=0, relwidth=1.0, height=36)
+        for key, label, symbol, accent in (
+            ("money", "MONEY", "$", "#aa8437"),
+            ("steel", "STEEL", "S", "#54747a"),
+            ("technology", "TECH", "T", "#47745f")):
+            cell = tk.Frame(resource_strip, bg="#d9ddd5")
+            cell.pack(side="left", fill="y", padx=(12, 14))
+            tk.Label(cell, text=symbol, bg="#d9ddd5", fg=accent,
+                 font=("Georgia", 12, "bold")).pack(side="left", padx=(0, 6))
+            tk.Label(cell, text=label, bg="#d9ddd5", fg=MUTED,
+                 font=("Consolas", 8, "bold")).pack(side="left", padx=(0, 5))
+            tk.Label(cell, textvariable=self.stat_vars[key], bg="#d9ddd5", fg=INK,
+                 font=("Consolas", 11, "bold")).pack(side="left")
+        self.settings_button = ttk.Button(
+            resource_strip, text="Settings", command=self._show_settings)
+        self.settings_button.pack(side="right", padx=8, pady=3)
 
-        info = ttk.LabelFrame(sidebar, text="SECTOR INTEL", padding=12)
-        info.pack(fill="x", pady=(0, 10))
-        self.info_name = tk.StringVar(value="Unselected")
-        ttk.Label(info, textvariable=self.info_name, font=("Georgia", 16, "bold")).pack(anchor="w")
-        self.info_owner = tk.StringVar(value="Select a unit or city")
-        ttk.Label(info, textvariable=self.info_owner, style="Muted.TLabel").pack(anchor="w", pady=(3, 12))
-        self.info_details = tk.StringVar(value="")
-        ttk.Label(info, textvariable=self.info_details, justify="left", wraplength=240).pack(anchor="w")
+        self.hex_info_panel = tk.Frame(
+            self.map_view, bg="#f4f3ed", padx=10, pady=8,
+            highlightthickness=1, highlightbackground="#aeb8ac")
+        self.hex_info_title = tk.StringVar()
+        self.hex_info_owner = tk.StringVar()
+        self.hex_info_details = tk.StringVar()
+        tk.Label(self.hex_info_panel, textvariable=self.hex_info_title, bg="#f4f3ed",
+                 fg=INK, font=("Georgia", 12, "bold"), anchor="w").pack(fill="x")
+        tk.Label(self.hex_info_panel, textvariable=self.hex_info_owner, bg="#f4f3ed",
+                 fg=MUTED, font=("Segoe UI", 8), anchor="w").pack(fill="x", pady=(2, 5))
+        tk.Label(self.hex_info_panel, textvariable=self.hex_info_details, bg="#f4f3ed",
+                 fg=INK, font=("Segoe UI", 9), justify="left", anchor="w",
+                 wraplength=250).pack(fill="x")
+        self.hex_info_panel.place_forget()
 
-        commands = ttk.LabelFrame(sidebar, text="COMMAND", padding=12)
-        commands.pack(fill="x", pady=(0, 10))
-        ttk.Label(commands, text="Play as country").pack(anchor="w", pady=(0, 3))
-        self.player_country_var = tk.StringVar()
-        self.player_country_choice = ttk.Combobox(
-            commands, textvariable=self.player_country_var, state="readonly")
-        self.player_country_choice.pack(fill="x", pady=(0, 8))
-        self.player_country_choice.bind("<<ComboboxSelected>>",
-                                       self._on_player_country_selected)
-        ttk.Label(commands, text="Resource account").pack(anchor="w", pady=(0, 3))
-        self.resource_country_var = tk.StringVar()
-        self.country_choice = ttk.Combobox(
-            commands, textvariable=self.resource_country_var, state="readonly")
-        self.country_choice.pack(fill="x", pady=(0, 8))
-        self.country_choice.bind("<<ComboboxSelected>>", self._on_country_selected)
-        self.type_var = tk.StringVar(value="Infantry")
-        self.unit_choice = ttk.Combobox(commands, textvariable=self.type_var,
-                                        values=list(UNIT_TYPES.keys()), state="readonly")
-        self.unit_choice.pack(fill="x", pady=(0, 8))
-        self.unit_choice.bind("<<ComboboxSelected>>", self._update_unit_preview)
-        self.unit_preview = tk.StringVar(value="")
-        ttk.Label(commands, textvariable=self.unit_preview, style="Muted.TLabel",
-              justify="left", wraplength=240).pack(fill="x", pady=(0, 7))
-        self.recruit_button = ttk.Button(commands, text="Recruit at city", command=self._recruit)
-        self.recruit_button.pack(fill="x", pady=3)
-        self.attack_button = ttk.Button(commands, text="Attack target", style="Accent.TButton",
-                                        command=self._attack)
-        self.attack_button.pack(fill="x", pady=3)
-        self.cancel_button = ttk.Button(commands, text="Clear target", command=self._cancel_attack)
-        self.cancel_button.pack(fill="x", pady=3)
-        self.end_button = ttk.Button(commands, text="End turn  >", command=self._end_turn)
-        self.end_button.pack(fill="x", pady=(9, 3))
-        self.load_map_button = ttk.Button(commands, text="Load map", command=self._load_map)
-        self.load_map_button.pack(fill="x", pady=3)
-        self.restart_button = ttk.Button(commands, text="Start campaign", command=self._restart)
-        self.restart_button.pack(fill="x", pady=3)
-        self._update_unit_preview()
-
-        legend = ttk.LabelFrame(sidebar, text="UNIT ROSTER", padding=12)
-        legend.pack(fill="x", pady=(0, 10))
-        for kind, details in UNIT_TYPES.items():
-            cost = details["cost"]
-            ttk.Label(legend, text="{}  ATK {} RNG {} MP {}\nM {} / S {} / T {}".format(
-                kind, details["attack"], details["range"], details["movement"],
-                cost["money"], cost["steel"], cost["technology"]),
-                style="Muted.TLabel").pack(anchor="w", pady=2)
-
-        history = ttk.LabelFrame(sidebar, text="FIELD REPORT", padding=10)
-        history.pack(fill="both", expand=True)
-        self.log_box = tk.Listbox(history, height=7, borderwidth=0, highlightthickness=0,
-                                  bg="#f4f3ed", fg="#46534b", font=("Segoe UI", 9),
-                                  activestyle="none")
-        self.log_box.pack(fill="both", expand=True)
-
+        self.unit_info_button = ttk.Button(
+            self.map_view, text="i", width=2, style="MapIcon.TButton",
+            command=self._show_unit_details)
+        self.city_recruit_button = ttk.Button(
+            self.map_view, text="+", width=2, style="MapAction.TButton",
+            command=self._show_recruit_dialog)
+        self.end_turn_button = ttk.Button(
+            self.map_view, text="End turn  >", style="Accent.TButton",
+            command=self._end_turn)
         self.status_var = tk.StringVar(value=self.message)
-        status = tk.Label(self.root, textvariable=self.status_var, anchor="w", padx=15, pady=7,
-                          bg="#dcded5", fg="#526057", font=("Segoe UI", 9))
-        status.pack(fill="x", side="bottom")
-
-    def _set_initial_sidebar_width(self):
-        if self._initial_sidebar_sash_set or self.main_splitter.winfo_width() <= 1:
-            return
-        self._initial_sidebar_sash_set = True
-        self.main_splitter.sashpos(0, max(320, self.main_splitter.winfo_width() - 300))
+        self.status_label = tk.Label(
+            self.map_view, textvariable=self.status_var, anchor="w", padx=8, pady=4,
+            bg="#f4f3ed", fg="#526057", font=("Segoe UI", 9))
 
     def _log(self, message):
-        self.log_box.insert(0, "T{:02d}  {}".format(self.model.turn, message))
-        while self.log_box.size() > 8:
-            self.log_box.delete(tk.END)
+        self.history.insert(0, "T{:02d}  {}".format(self.model.turn, message))
+        del self.history[40:]
+
+    def _show_settings(self):
+        SettingsDialog(
+            self.root, self.model, self.player_country_id,
+            self.pending_player_country_id, self.resource_country_id,
+            self.campaign_started, self.current_map_name, self.history,
+            self.debug_mode,
+            self.attack_target, self._on_settings_country_selected,
+            self._on_settings_resource_selected, self._open_map_selector,
+            self._settings_campaign_action, self._restart, self._attack,
+            self._cancel_attack, self._on_debug_changed)
+
+    def _on_debug_changed(self, enabled):
+        self.debug_mode = bool(enabled)
+        self._refresh()
 
     def _on_hex_click(self, position):
         if not self.campaign_started or self.model.phase != PLAYER:
@@ -247,44 +200,43 @@ class GameApp(object):
         self.message = "{}: select a unit or recruit here.".format(city["name"]) if city else "Select one of your units."
         self._refresh()
 
-    def _recruit(self):
-        unit, message = self.model.recruit(self.selected_hex, self.type_var.get())
-        self.message = message
+    def _show_unit_details(self):
+        unit = self.model.unit_at(self.selected_hex)
         if unit:
-            self.selected_unit = unit
-            self.selected_hex = unit.position
-            self._log(message)
+            UnitInfoDialog(self.root, self.model, unit, self.debug_mode)
+
+    def _show_recruit_dialog(self):
+        city = self.model.cities.get(self.selected_hex)
+        if (not self.campaign_started or self.model.phase != PLAYER or not city or
+                city["owner"] != self.player_country_id):
+            return
+        RecruitDialog(self.root, self.model, city, self.player_country_id,
+                      self.campaign_started, self._on_recruited)
+
+    def _on_recruited(self, unit, message):
+        self.message = message
+        self.selected_unit = unit
+        self.selected_hex = unit.position
+        self.attack_target = None
+        self._log(message)
         self._refresh()
 
-    def _update_unit_preview(self, event=None):
-        stats = UNIT_TYPES[self.type_var.get()]
-        cost = stats["cost"]
-        self.unit_preview.set(
-            "ATK {}  |  Range {}  |  HP {}\nMovement {} MP\nCost: M {} / S {} / T {}".format(
-                stats["attack"], stats["range"], stats["hp"],
-                stats["movement"], cost["money"], cost["steel"], cost["technology"]))
-
-    def _on_country_selected(self, event=None):
-        selected_name = self.resource_country_var.get()
-        self.resource_country_id = next(
-            country_id for country_id, country in self.model.countries.items()
-            if country["name"] == selected_name and
-            country["faction"] == self.model.player_faction)
+    def _on_settings_resource_selected(self, country_id):
+        account_country_id = (self.player_country_id if self.campaign_started else
+                              self.pending_player_country_id)
+        if (country_id in self.model.countries and
+                self.model.faction_for(country_id) == self.model.faction_for(
+                    account_country_id)):
+            self.resource_country_id = country_id
         self._refresh()
 
-    def _on_player_country_selected(self, event=None):
-        if self.campaign_started:
-            self.player_country_var.set(self.model.country_name(self.player_country_id))
+    def _on_settings_country_selected(self, country_id):
+        if self.campaign_started or country_id not in self.model.countries or \
+                self.model.faction_for(country_id) == NEUTRAL:
             return
-        selected_name = self.player_country_var.get()
-        selected_id = next(
-            (country_id for country_id, country in self.model.countries.items()
-             if country["name"] == selected_name and country["faction"] != NEUTRAL),
-            None)
-        if selected_id is None:
-            return
-        self.pending_player_country_id = selected_id
-        self.message = "{} selected. Start the campaign to confirm.".format(selected_name)
+        self.pending_player_country_id = country_id
+        self.message = "{} selected. Start the campaign to confirm.".format(
+            self.model.country_name(country_id))
         self._refresh()
 
     def _attack(self):
@@ -304,6 +256,13 @@ class GameApp(object):
         self.attack_target = None
         self.message = "Target cleared."
         self._refresh()
+
+    def _settings_campaign_action(self):
+        if self.campaign_started:
+            self._reset_campaign("Campaign restarted as {}.".format(
+                self.model.country_name(self.player_country_id)))
+        else:
+            self._restart()
 
     def _end_turn(self):
         if not self.campaign_started or self.model.phase != PLAYER:
@@ -371,29 +330,155 @@ class GameApp(object):
         self.attack_target = None
         self.result_shown = False
         self.message = message
-        self.log_box.delete(0, tk.END)
+        self.history = []
         self._log("Campaign started as {}.".format(
             self.model.country_name(self.player_country_id)))
         self.map_view.model = self.model
         self.map_view.fit_map(draw=False)
         self._refresh()
 
-    def _load_map(self):
-        path = filedialog.askopenfilename(
-            parent=self.root,
-            title="Load custom map",
-            filetypes=(("Steel Dominion map", "*.json"), ("All files", "*.*")))
-        if not path:
+    def _open_map_selector(self):
+        if self.campaign_started and self.model.phase == ENEMY:
             return
+
+        records = []
         try:
-            map_data = load_map_file(path)
+            filenames = sorted(
+                (filename for filename in os.listdir(self.maps_directory)
+                 if filename.lower().endswith(".json")), key=str.lower)
+        except OSError:
+            filenames = []
+        for filename in filenames:
+            path = os.path.join(self.maps_directory, filename)
+            stem = os.path.splitext(filename)[0]
+            name = stem.replace("_", " ").replace("-", " ").title()
+            if len(stem) <= 3:
+                name = stem.upper()
+            record = {"name": name, "path": path, "data": None, "error": None}
+            try:
+                record["data"] = load_map_file(path)
+                GameModel(record["data"])
+            except (OSError, ValueError, TypeError, KeyError) as error:
+                record["error"] = str(error)
+            records.append(record)
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Choose campaign map")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.geometry("640x410")
+        dialog.configure(bg=PAPER)
+
+        header = tk.Frame(dialog, bg=INK, padx=20, pady=14)
+        header.pack(fill="x")
+        tk.Label(header, text="SELECT CAMPAIGN MAP", bg=INK, fg="#f5f2e8",
+                 font=("Georgia", 14, "bold")).pack(anchor="w")
+        tk.Label(header, text="Choose a map from the maps folder.", bg=INK,
+                 fg="#a9b3a9", font=("Segoe UI", 9)).pack(anchor="w", pady=(3, 0))
+
+        content = ttk.Frame(dialog, padding=(18, 16, 18, 10))
+        content.pack(fill="both", expand=True)
+        content.columnconfigure(1, weight=1)
+        ttk.Label(content, text="AVAILABLE MAPS").grid(row=0, column=0, sticky="w",
+                                                       pady=(0, 6))
+        ttk.Label(content, text="MAP INTEL").grid(row=0, column=1, sticky="w",
+                                                  padx=(18, 0), pady=(0, 6))
+
+        list_frame = ttk.Frame(content)
+        list_frame.grid(row=1, column=0, sticky="nsew")
+        map_list = tk.Listbox(list_frame, width=24, height=13, exportselection=False,
+                              activestyle="none", borderwidth=0, highlightthickness=1,
+                              highlightbackground="#c9cec4", bg="#f4f3ed", fg=INK,
+                              selectbackground=GREEN, selectforeground="white",
+                              font=("Segoe UI", 10))
+        map_scroll = ttk.Scrollbar(list_frame, orient="vertical",
+                                   command=map_list.yview)
+        map_list.configure(yscrollcommand=map_scroll.set)
+        map_list.pack(side="left", fill="both", expand=True)
+        map_scroll.pack(side="right", fill="y")
+
+        preview = ttk.LabelFrame(content, text="", padding=14)
+        preview.grid(row=1, column=1, sticky="nsew", padx=(18, 0))
+        preview_name = tk.StringVar(value="Select a map")
+        preview_details = tk.StringVar(value="")
+        ttk.Label(preview, textvariable=preview_name,
+                  font=("Georgia", 16, "bold")).pack(anchor="w", pady=(4, 10))
+        ttk.Label(preview, textvariable=preview_details, justify="left",
+                  wraplength=275, style="Muted.TLabel").pack(anchor="w")
+
+        selected_record = [None]
+        for record in records:
+            label = record["name"]
+            if record["error"]:
+                label += "  [INVALID]"
+            map_list.insert(tk.END, label)
+
+        def update_preview(event=None):
+            selection = map_list.curselection()
+            if not selection:
+                selected_record[0] = None
+                preview_name.set("No maps found")
+                preview_details.set("Add playable .json maps to the maps folder.")
+                choose_button.configure(state="disabled")
+                return
+            record = records[selection[0]]
+            selected_record[0] = record
+            preview_name.set(record["name"])
+            if record["error"]:
+                preview_details.set("This map cannot be played.\n\n{}".format(
+                    record["error"]))
+                choose_button.configure(state="disabled")
+                return
+            data = record["data"]
+            neutral_count = sum(1 for country in data["countries"]
+                                if country["faction"] == NEUTRAL)
+            preview_details.set(
+                "{} x {} hexes\n{} countries ({} neutral)\n"
+                "{} cities / {} starting units\n{} rivers".format(
+                    data["columns"], data["rows"], len(data["countries"]),
+                    neutral_count, len(data["cities"]), len(data["units"]),
+                    len(data["rivers"])))
+            choose_button.configure(state="normal")
+
+        def choose_map():
+            record = selected_record[0]
+            if record and not record["error"] and self._apply_map_record(record):
+                dialog.destroy()
+
+        map_list.bind("<<ListboxSelect>>", update_preview)
+        map_list.bind("<Double-Button-1>", lambda event: choose_map())
+        actions = ttk.Frame(dialog, padding=(18, 0, 18, 16))
+        actions.pack(fill="x")
+        choose_button = ttk.Button(actions, text="Use map", style="Accent.TButton",
+                                   command=choose_map)
+        choose_button.pack(side="right")
+        ttk.Button(actions, text="Cancel", command=dialog.destroy).pack(
+            side="right", padx=(0, 8))
+
+        if records:
+            current_path = os.path.normcase(os.path.abspath(self.current_map_path))
+            initial_index = next((index for index, record in enumerate(records)
+                                  if os.path.normcase(os.path.abspath(record["path"])) ==
+                                  current_path), 0)
+            map_list.selection_set(initial_index)
+            map_list.activate(initial_index)
+            map_list.see(initial_index)
+        update_preview()
+        dialog.bind("<Escape>", lambda event: dialog.destroy())
+        dialog.grab_set()
+
+    def _apply_map_record(self, record):
+        try:
+            map_data = record["data"]
             model = GameModel(map_data, self.player_country_id)
-        except (OSError, ValueError) as error:
+        except (OSError, ValueError, TypeError, KeyError) as error:
             messagebox.showerror("Unable to load map", str(error), parent=self.root)
-            return
+            return False
 
         self.model = model
         self.map_data = map_data
+        self.current_map_path = record["path"]
+        self.current_map_name = record["name"]
         self.player_country_id = model.player_country_id
         self.pending_player_country_id = self.player_country_id
         self.campaign_started = False
@@ -404,118 +489,107 @@ class GameApp(object):
                                  if city["owner"] == self.player_country_id)
         self.attack_target = None
         self.result_shown = False
-        self.message = "Custom map loaded. Choose your country, then start the campaign."
-        self.log_box.delete(0, tk.END)
-        self._log("Custom map loaded. Choose a country to begin.")
+        self.message = "{} loaded. Choose a country, then start the campaign.".format(
+            self.current_map_name)
+        self.history = []
+        self._log("{} map selected. Choose a country to begin.".format(
+            self.current_map_name))
         self.map_view.model = model
         self.map_view.fit_map(draw=False)
         self._refresh()
+        return True
 
     def _refresh(self):
-        player_cities = self.model.owned_cities(self.player_country_id)
-        self.stat_vars["turn"].set(str(self.model.turn))
-        self.stat_vars["cities"].set("{} / {}".format(player_cities, len(self.model.cities)))
-        player_countries = [country for country in self.model.countries.values()
-                            if country["faction"] == self.model.faction_for(
-                                self.player_country_id)]
+        account_country_id = (self.player_country_id if self.campaign_started else
+                              self.pending_player_country_id)
         if (self.resource_country_id not in self.model.countries or
                 self.model.faction_for(self.resource_country_id) !=
-                self.model.faction_for(self.player_country_id)):
-            self.resource_country_id = self.player_country_id
-        self.country_choice.configure(values=[country["name"] for country in player_countries])
-        self.country_choice.configure(state="readonly" if self.campaign_started else "disabled")
-        self.resource_country_var.set(self.model.country_name(self.resource_country_id))
-        playable_countries = [country for country in self.model.countries.values()
-                              if country["faction"] != NEUTRAL]
-        self.player_country_choice.configure(
-            values=[country["name"] for country in playable_countries],
-            state="disabled" if self.campaign_started else "readonly")
-        display_country_id = (self.player_country_id if self.campaign_started else
-                              self.pending_player_country_id)
-        self.player_country_var.set(self.model.country_name(display_country_id))
-        self.restart_button.configure(
-            text="Restart campaign" if self.campaign_started else "Start campaign")
+                self.model.faction_for(account_country_id)):
+            self.resource_country_id = account_country_id
         resources = self.model.countries[self.resource_country_id]["resources"]
         for resource in ("money", "steel", "technology"):
             self.stat_vars[resource].set(str(resources[resource]))
 
         city = self.model.cities.get(self.selected_hex)
-        unit = self.selected_unit if self.selected_unit in self.model.units else None
-        if unit:
-            side = self._country_control_label(unit.owner)
-            if unit.attacks_left <= 0:
-                action = "Turn spent"
-            elif unit.movement_left > 0:
-                action = "Move + attack ready"
-            else:
-                action = "Attack ready"
-            display_name = "Transport ship ({})".format(unit.kind) if unit.embarked else unit.kind
-            unit_state = "Afloat" if unit.embarked else action
-            self.info_name.set(display_name)
-            self.info_owner.set("{} / {}  |  {}".format(
-                self.model.country_name(unit.owner), side, unit_state))
-            self.info_details.set("Hex: {}\nStrength: {}/{}\nAttack: {:g} (base {})  |  Range: {}\nMovement: {}/{} MP\nAttacks: {}/{}".format(
-                self._coord_label(unit.position), unit.hp, unit.max_hp,
-                unit.effective_attack, unit.attack, unit.range,
-                unit.movement_left, unit.movement, unit.attacks_left, unit.attacks_per_turn))
-            if city:
-                self.info_details.set(self.info_details.get() + "\n\n" + self._city_details(city))
-        elif city:
-            side = self._country_control_label(city["owner"])
-            self.info_name.set(city["name"])
-            self.info_owner.set("{} / {} controlled city".format(
-                self.model.country_name(city["owner"]), side))
-            self.info_details.set(self._city_details(city))
-        else:
-            terrain = self.model.tiles.get(self.selected_hex, "Unknown")
-            self.info_name.set("Battlefield hex")
-            self.info_owner.set(terrain)
-            self.info_details.set("Coordinate: {}\nHills and forests reduce incoming damage.".format(
-                self._coord_label(self.selected_hex)))
+        unit = self.model.unit_at(self.selected_hex)
+        self._update_map_info(city, unit)
 
-        can_command = (self.campaign_started and self.model.phase == PLAYER and unit and
-               unit.owner == self.player_country_id and not unit.attacked)
-        can_recruit = (self.campaign_started and self.model.phase == PLAYER and city and
-               city["owner"] == self.player_country_id)
-        can_attack = can_command and self.attack_target is not None
-        self.recruit_button.configure(state="normal" if can_recruit else "disabled")
-        self.attack_button.configure(state="normal" if can_attack else "disabled")
-        self.cancel_button.configure(state="normal" if self.attack_target is not None else "disabled")
-        self.end_button.configure(
-            state="normal" if self.campaign_started and self.model.phase == PLAYER else "disabled")
-        self.load_map_button.configure(
-            state="normal" if self.campaign_started and self.model.phase in (PLAYER, "over")
+        selected_unit = (self.selected_unit if self.selected_unit in self.model.units else None)
+        self.end_turn_button.configure(
+            state="normal" if self.campaign_started and self.model.phase == PLAYER
             else "disabled")
+        self.end_turn_button.place(relx=1.0, rely=1.0, x=-12, y=-12, anchor="se")
+        self.unit_info_button.place_forget()
+        self.city_recruit_button.place_forget()
+        can_recruit = (self.campaign_started and self.model.phase == PLAYER and city and
+                       city["owner"] == self.player_country_id)
+        if unit or can_recruit:
+            unit_offset = -16 if can_recruit else 0
+            city_offset = 16 if unit else 0
+        if unit:
+            self.unit_info_button.place(
+                relx=0.5, rely=1.0, x=unit_offset, y=-3, anchor="s")
+        if can_recruit:
+            self.city_recruit_button.place(
+                relx=0.5, rely=1.0, x=city_offset, y=-3, anchor="s")
         self.map_view.set_selection(
             self.selected_hex if self.campaign_started else None,
-            unit if self.campaign_started else None,
+            selected_unit if self.campaign_started else None,
             self.attack_target if self.campaign_started else None)
         self.status_var.set(self.message)
+        if self.debug_mode:
+            self.status_label.place(x=10, rely=1.0, y=-8, anchor="sw")
+            self.status_label.lift()
+        else:
+            self.status_label.place_forget()
+
+    def _update_map_info(self, city, unit):
+        if not self.campaign_started or self.selected_hex not in self.model.tiles:
+            self.hex_info_panel.place_forget()
+            return
+
+        terrain = self.model.tiles[self.selected_hex]
+        coordinate = self._coord_label(self.selected_hex)
+        if city:
+            production = self.model.city_production(city)
+            self.hex_info_title.set(city["name"])
+            owner_text = self.model.country_name(city["owner"])
+            if self.debug_mode:
+                owner_text = "{}  /  {}  /  Hex {}".format(
+                    owner_text, terrain, coordinate)
+            self.hex_info_owner.set(owner_text)
+            self.hex_info_details.set(
+                "HP: {}/{}\nCity Lv {}  |  Industry Lv {}  |  Research Lv {}\n"
+                "Money +{}  |  Steel +{}  |  Tech +{} / turn".format(
+                    city["health"], city["max_health"], city["city_level"],
+                    city["industry_level"], city["research_level"],
+                    production["money"], production["steel"],
+                    production["technology"]))
+            self.hex_info_panel.place(x=8, y=44, anchor="nw")
+            self.hex_info_panel.lift()
+            return
+        elif unit:
+            unit_name = "Transport ship ({})".format(unit.kind) if unit.embarked else unit.kind
+            self.hex_info_title.set(unit_name)
+            owner_text = self.model.country_name(unit.owner)
+            if self.debug_mode:
+                owner_text = "{}  /  {}  /  Hex {}".format(
+                    owner_text, terrain, coordinate)
+            self.hex_info_owner.set(owner_text)
+            self.hex_info_details.set("HP: {}/{}".format(unit.hp, unit.max_hp))
+        elif self.debug_mode:
+            self.hex_info_title.set(terrain)
+            self.hex_info_owner.set("Hex {}".format(coordinate))
+            self.hex_info_details.set("")
+        else:
+            self.hex_info_panel.place_forget()
+            return
+        self.hex_info_panel.place(x=8, y=44, anchor="nw")
+        self.hex_info_panel.lift()
 
     @staticmethod
     def _coord_label(position):
         return "{}-{}".format(position[0] + 1, position[1] + 1)
-
-    def _country_control_label(self, country_id):
-        faction = self.model.faction_for(country_id)
-        if faction == NEUTRAL:
-            return "Neutral"
-        if country_id == self.player_country_id:
-            return "Player controlled"
-        if faction == self.model.player_faction:
-            return "AI ally"
-        return "AI opponent"
-
-    def _city_details(self, city):
-        production = self.model.city_production(city)
-        return ("HP: {}/{}\n"
-            "City Lv {}: +{} money / turn\n"
-                "Industry Lv {}: +{} steel / turn\n"
-                "Research Lv {}: +{} tech / turn").format(
-            city["health"], city["max_health"], city["city_level"], production["money"],
-            city["industry_level"], production["steel"],
-            city["research_level"], production["technology"])
-
 
 def run_app():
     root = tk.Tk()

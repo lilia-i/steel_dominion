@@ -239,8 +239,9 @@ def normalize_map_data(data):
         levels = {}
         for level_key in ("city_level", "industry_level", "research_level"):
             level = city_level if level_key == "city_level" else city.get(level_key, 1)
-            if type(level) is not int or not 1 <= level <= 99:
-                raise ValueError("City production levels must be from 1 to 99.")
+            minimum_level = 1 if level_key == "city_level" else 0
+            if type(level) is not int or not minimum_level <= level <= 99:
+                raise ValueError("City level must be 1 to 99; production levels must be 0 to 99.")
             levels[level_key] = level
         occupied.add(position)
         normalized_city = {
@@ -347,7 +348,6 @@ def normalize_map_data(data):
 
 def validate_playable_map(data):
     normalized = normalize_map_data(data)
-    countries = {country["id"]: country for country in normalized["countries"]}
     city_owners = {city["owner"] for city in normalized["cities"]}
     for country in normalized["countries"]:
         if country["id"] not in city_owners:
@@ -355,9 +355,6 @@ def validate_playable_map(data):
     factions = {country["faction"] for country in normalized["countries"]}
     if PLAYER not in factions or ENEMY not in factions:
         raise ValueError("A playable map needs countries in both player and enemy factions.")
-    unit_factions = {countries[unit["owner"]]["faction"] for unit in normalized["units"]}
-    if PLAYER not in unit_factions or ENEMY not in unit_factions:
-        raise ValueError("A playable map needs at least one starting unit for each faction.")
     assigned_positions = set()
     for row, territory_row in enumerate(normalized["territories"]):
         for col, city_position in enumerate(territory_row):

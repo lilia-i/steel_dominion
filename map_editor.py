@@ -221,7 +221,7 @@ class MapEditorApp(object):
             level_group = ttk.Frame(production_levels)
             level_group.pack(side="left", expand=True, fill="x")
             ttk.Label(level_group, text=label).pack(side="left")
-            spinbox = tk.Spinbox(level_group, from_=1, to=99, width=3,
+            spinbox = tk.Spinbox(level_group, from_=0, to=99, width=3,
                                  textvariable=variable)
             spinbox.pack(side="right", padx=(2, 8))
             setattr(self, attribute, spinbox)
@@ -445,8 +445,10 @@ class MapEditorApp(object):
             return
         if (not name or len(name) > 30 or not owner or
                 not 1 <= level <= CITY_MAX_LEVEL or
-                not 1 <= industry_level <= 99 or not 1 <= research_level <= 99):
-            self.status.set("Set a valid city name, country, and levels (1 to 99).")
+                not 0 <= industry_level <= 99 or not 0 <= research_level <= 99):
+            self.status.set(
+                "Set a valid city, industry, and research level (city: 1 to {}; production: 0 to 99).".format(
+                    CITY_MAX_LEVEL))
             return
         if self.data["terrain"][row][col] == "Water":
             self.data["terrain"][row][col] = "Plain"

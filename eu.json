@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 7,
   "columns": 78,
   "rows": 70,
   "terrain": [
@@ -22417,11 +22417,13 @@
       ]
     ]
   ],
+  "rivers": [],
   "countries": [
     {
       "id": "allied",
-      "name": "United Kindom",
+      "name": "United Kingdom",
       "faction": "player",
+      "color": "#f4e36d",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22432,6 +22434,7 @@
       "id": "axis",
       "name": "Spain",
       "faction": "enemy",
+      "color": "#ad76c4",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22441,7 +22444,8 @@
     {
       "id": "country_1",
       "name": "Portugal",
-      "faction": "player",
+      "faction": "neutral",
+      "color": "#c5e69b",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22452,6 +22456,7 @@
       "id": "country_2",
       "name": "France",
       "faction": "player",
+      "color": "#2878d0",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22462,6 +22467,7 @@
       "id": "country_3",
       "name": "Belgium",
       "faction": "player",
+      "color": "#348d58",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22470,8 +22476,9 @@
     },
     {
       "id": "country_4",
-      "name": "Netherland",
+      "name": "Netherlands",
       "faction": "player",
+      "color": "#e97822",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22482,6 +22489,7 @@
       "id": "country_5",
       "name": "Germany",
       "faction": "enemy",
+      "color": "#42474d",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22490,8 +22498,9 @@
     },
     {
       "id": "country_6",
-      "name": "Switz.",
-      "faction": "enemy",
+      "name": "Switzerland",
+      "faction": "neutral",
+      "color": "#95633a",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22500,8 +22509,9 @@
     },
     {
       "id": "country_7",
-      "name": "Ltaly",
+      "name": "Italy",
       "faction": "enemy",
+      "color": "#773ba4",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22512,6 +22522,7 @@
       "id": "country_8",
       "name": "Denmark",
       "faction": "player",
+      "color": "#ec77ab",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22522,6 +22533,7 @@
       "id": "country_9",
       "name": "Norway",
       "faction": "player",
+      "color": "#f2c6d4",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22531,7 +22543,8 @@
     {
       "id": "country_10",
       "name": "Sweden",
-      "faction": "player",
+      "faction": "neutral",
+      "color": "#143d73",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22542,6 +22555,7 @@
       "id": "country_11",
       "name": "Greece",
       "faction": "player",
+      "color": "#a5ddf2",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22552,6 +22566,7 @@
       "id": "country_12",
       "name": "Yugoslavia",
       "faction": "player",
+      "color": "#9a6b40",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22562,6 +22577,7 @@
       "id": "country_13",
       "name": "Bulgaria",
       "faction": "enemy",
+      "color": "#14532d",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22572,6 +22588,7 @@
       "id": "country_14",
       "name": "Hungary",
       "faction": "enemy",
+      "color": "#db942a",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22582,6 +22599,7 @@
       "id": "country_15",
       "name": "Romania",
       "faction": "enemy",
+      "color": "#f0d84a",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22592,6 +22610,7 @@
       "id": "country_16",
       "name": "Poland",
       "faction": "player",
+      "color": "#e9aa8f",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22602,6 +22621,7 @@
       "id": "country_17",
       "name": "Finland",
       "faction": "enemy",
+      "color": "#f5f5f0",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22612,6 +22632,7 @@
       "id": "country_18",
       "name": "Soviet Union",
       "faction": "player",
+      "color": "#c9323b",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22622,6 +22643,7 @@
       "id": "country_19",
       "name": "Egypt",
       "faction": "player",
+      "color": "#c6a27d",
       "resources": {
         "money": 16,
         "steel": 8,
@@ -22631,7 +22653,8 @@
     {
       "id": "country_20",
       "name": "Turkey",
-      "faction": "player",
+      "faction": "neutral",
+      "color": "#55331f",
       "resources": {
         "money": 16,
         "steel": 8,

@@ -1,16 +1,26 @@
+import colorsys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from game_config import (
     CITY_MAX_LEVEL,
     ENEMY,
+    NEUTRAL,
     PLAYER,
     TERRAIN_COLORS,
     UNIT_TYPES,
     city_hp_for_level,
 )
-from hex_map import HexMapView
-from map_data import MAX_MAP_SIZE, MIN_MAP_SIZE, load_map_file, new_map_data, save_map_file
+from hex_map import HexMapView, _country_colors
+from map_data import (
+    MAX_MAP_SIZE,
+    MIN_MAP_SIZE,
+    hex_neighbors,
+    load_map_file,
+    new_map_data,
+    save_map_file,
+)
+from ui_helpers import ScrollableFrame
 
 
 INK = "#202c27"
@@ -31,6 +41,9 @@ class EditorMapModel(object):
                 "position": (city["col"], city["row"]),
                 "name": city["name"],
                 "owner": city["owner"],
+                "city_level": city["city_level"],
+                "industry_level": city["industry_level"],
+                "research_level": city["research_level"],
                 "health": city["health"],
                 "max_health": city["max_health"],
             }
@@ -49,7 +62,10 @@ class EditorMapModel(object):
                        (unit["col"], unit["row"]))
             for unit in map_data["units"]
         ]
-        self.river_edges = set()
+        self.river_edges = {
+            frozenset((tuple(edge[0]), tuple(edge[1])))
+            for edge in map_data["rivers"]
+        }
 
     def unit_at(self, position):
         return next((unit for unit in self.units if unit.position == position), None)
@@ -76,6 +92,8 @@ class EditorUnit(object):
 
 
 class MapEditorApp(object):
+    clear_territory_label = "Unassigned (clear)"
+
     def __init__(self, root):
         self.root = root
         self.root.title("Steel Dominion | Map Editor")
@@ -89,13 +107,25 @@ class MapEditorApp(object):
         self.city_name = tk.StringVar(value="City")
         self.city_owner = tk.StringVar()
         self.city_level = tk.IntVar(value=1)
+        self.industry_level = tk.IntVar(value=1)
+        self.research_level = tk.IntVar(value=1)
         self.city_hp_preview = tk.StringVar(value="Maximum HP: {}".format(city_hp_for_level(1)))
         self.city_level.trace("w", self._update_city_hp_preview)
+        self.selected_city_position = None
+        self.river_start = None
         self.territory_city_var = tk.StringVar()
         self.unit_kind = tk.StringVar(value="Infantry")
         self.unit_owner = tk.StringVar()
         self.country_name = tk.StringVar()
         self.country_faction = tk.StringVar(value=PLAYER)
+        self.country_hue = tk.DoubleVar(value=48)
+        self.country_saturation = tk.DoubleVar(value=56)
+        self.country_brightness = tk.DoubleVar(value=96)
+        self.country_color_hex = tk.StringVar(value="#f4e36d")
+        self.country_hue_label = tk.StringVar(value="Hue 48")
+        self.country_saturation_label = tk.StringVar(value="Saturation 56%")
+        self.country_brightness_label = tk.StringVar(value="Brightness 96%")
+        self._loading_country_color = False
         self.country_resources = {
             key: tk.IntVar(value=0) for key in ("money", "steel", "technology")
         }
@@ -125,9 +155,15 @@ class MapEditorApp(object):
 
         body = ttk.Frame(self.root, padding=12)
         body.pack(fill="both", expand=True)
-        sidebar = ttk.Frame(body, width=250)
-        sidebar.pack(side="left", fill="y", padx=(0, 12))
-        sidebar.pack_propagate(False)
+        splitter = ttk.Panedwindow(body, orient="horizontal")
+        splitter.pack(fill="both", expand=True)
+        sidebar_pane = ttk.Frame(splitter, width=270)
+        sidebar_scroll = ScrollableFrame(sidebar_pane, canvas_bg=PAPER)
+        sidebar_scroll.pack(fill="both", expand=True)
+        sidebar = sidebar_scroll.content
+        self.sidebar_scroll = sidebar_scroll
+        self.splitter = splitter
+        self._initial_sidebar_sash_set = False
 
         files = ttk.LabelFrame(sidebar, text="MAP FILE", padding=10)
         files.pack(fill="x", pady=(0, 10))
@@ -155,7 +191,7 @@ class MapEditorApp(object):
         tools.add(country_tab, text="Countries")
         self.tools = tools
 
-        for label in ("Terrain", "City", "Territory", "Unit", "Erase"):
+        for label in ("Terrain", "City", "Territory", "River", "Unit", "Erase"):
             ttk.Radiobutton(edit_tab, text=label, value=label, variable=self.mode,
                             command=self._update_tool_state).pack(anchor="w", pady=2)
 
@@ -177,7 +213,25 @@ class MapEditorApp(object):
             city_level_row, from_=1, to=CITY_MAX_LEVEL, width=4,
             textvariable=self.city_level, command=self._update_city_hp_preview)
         self.city_level_spin.pack(side="right")
+        production_levels = ttk.Frame(edit_tab)
+        production_levels.pack(fill="x", pady=(0, 5))
+        for label, variable, attribute in (
+                ("Industry", self.industry_level, "industry_level_spin"),
+                ("Research", self.research_level, "research_level_spin")):
+            level_group = ttk.Frame(production_levels)
+            level_group.pack(side="left", expand=True, fill="x")
+            ttk.Label(level_group, text=label).pack(side="left")
+            spinbox = tk.Spinbox(level_group, from_=1, to=99, width=3,
+                                 textvariable=variable)
+            spinbox.pack(side="right", padx=(2, 8))
+            setattr(self, attribute, spinbox)
         ttk.Label(edit_tab, textvariable=self.city_hp_preview).pack(anchor="w", pady=(0, 7))
+        city_buttons = ttk.Frame(edit_tab)
+        city_buttons.pack(fill="x", pady=(0, 7))
+        ttk.Button(city_buttons, text="Apply city", command=self._apply_city).pack(
+            side="left", expand=True, fill="x", padx=(0, 3))
+        ttk.Button(city_buttons, text="Delete city", command=self._delete_selected_city).pack(
+            side="left", expand=True, fill="x", padx=(3, 0))
         ttk.Label(edit_tab, text="Paint hexes for city").pack(anchor="w")
         self.territory_choice = ttk.Combobox(
             edit_tab, textvariable=self.territory_city_var, state="readonly")
@@ -202,7 +256,26 @@ class MapEditorApp(object):
         ttk.Entry(country_form, textvariable=self.country_name).pack(fill="x", pady=(2, 6))
         ttk.Label(country_form, text="Faction").pack(anchor="w")
         ttk.Combobox(country_form, textvariable=self.country_faction,
-                     values=(PLAYER, ENEMY), state="readonly").pack(fill="x", pady=(2, 6))
+                     values=(PLAYER, ENEMY, NEUTRAL), state="readonly").pack(
+                         fill="x", pady=(2, 6))
+        ttk.Label(country_form, text="Country color (HSB)").pack(anchor="w", pady=(2, 2))
+        color_preview_row = ttk.Frame(country_form)
+        color_preview_row.pack(fill="x", pady=(0, 4))
+        self.country_color_swatch = tk.Label(
+            color_preview_row, text="      ", bg=self.country_color_hex.get(),
+            relief="solid", borderwidth=1)
+        self.country_color_swatch.pack(side="left", padx=(0, 7))
+        ttk.Label(color_preview_row, textvariable=self.country_color_hex).pack(side="left")
+        for label_var, variable, start, end in (
+                (self.country_hue_label, self.country_hue, 0, 360),
+                (self.country_saturation_label, self.country_saturation, 0, 100),
+                (self.country_brightness_label, self.country_brightness, 0, 100)):
+            scale_row = ttk.Frame(country_form)
+            scale_row.pack(fill="x", pady=1)
+            ttk.Label(scale_row, textvariable=label_var, width=15).pack(side="left")
+            ttk.Scale(scale_row, from_=start, to=end, variable=variable,
+                      command=self._update_country_color_preview).pack(
+                          side="left", fill="x", expand=True)
         for key in ("money", "steel", "technology"):
             resource_row = ttk.Frame(country_form)
             resource_row.pack(fill="x", pady=1)
@@ -218,8 +291,10 @@ class MapEditorApp(object):
         ttk.Button(country_buttons, text="Remove", command=self._remove_country).pack(
             side="left", expand=True, fill="x", padx=(3, 0))
 
-        map_frame = ttk.Frame(body)
-        map_frame.pack(side="right", fill="both", expand=True)
+        map_frame = ttk.Frame(splitter)
+        splitter.add(sidebar_pane, weight=0)
+        splitter.add(map_frame, weight=1)
+        splitter.bind("<Configure>", lambda event: self._set_initial_sidebar_width(), add="+")
         self.map_view = HexMapView(
             map_frame, EditorMapModel(self.data), self._on_hex_click,
             bg="#dfe7df", highlightthickness=1, highlightbackground="#d2d6cd", cursor="fleur")
@@ -233,7 +308,15 @@ class MapEditorApp(object):
         self._refresh_country_controls(self.selected_country_id)
         self._update_tool_state()
 
+    def _set_initial_sidebar_width(self):
+        if self._initial_sidebar_sash_set or self.splitter.winfo_width() <= 1:
+            return
+        self._initial_sidebar_sash_set = True
+        self.splitter.sashpos(0, 280)
+
     def _update_tool_state(self):
+        if self.mode.get() != "River":
+            self.river_start = None
         terrain_state = "readonly" if self.mode.get() == "Terrain" else "disabled"
         city_state = "normal" if self.mode.get() == "City" else "disabled"
         city_owner_state = "readonly" if self.mode.get() == "City" else "disabled"
@@ -243,6 +326,8 @@ class MapEditorApp(object):
         self.city_name_entry.configure(state=city_state)
         self.city_owner_choice.configure(state=city_owner_state)
         self.city_level_spin.configure(state="normal" if self.mode.get() == "City" else "disabled")
+        self.industry_level_spin.configure(state="normal" if self.mode.get() == "City" else "disabled")
+        self.research_level_spin.configure(state="normal" if self.mode.get() == "City" else "disabled")
         self.territory_choice.configure(state=territory_state)
         self.unit_choice.configure(state=unit_state)
         self.unit_owner_choice.configure(state=unit_state)
@@ -297,14 +382,17 @@ class MapEditorApp(object):
 
     def _refresh_territory_choices(self):
         cities = self.data["cities"]
-        labels = [self._city_label(city) for city in cities]
+        labels = [self.clear_territory_label]
+        labels.extend(self._city_label(city) for city in cities)
         selected = self.territory_city_var.get()
         self.territory_choice.configure(values=labels)
         if selected not in labels:
-            self.territory_city_var.set(labels[0] if labels else "")
+            self.territory_city_var.set(self.clear_territory_label)
 
     def _territory_target(self):
         selected = self.territory_city_var.get()
+        if selected == self.clear_territory_label:
+            return None
         for city in self.data["cities"]:
             if self._city_label(city) == selected:
                 return city["col"], city["row"]
@@ -321,9 +409,12 @@ class MapEditorApp(object):
             return True
         city_position = self._territory_target()
         if city_position is None:
+            self.data["territories"][row][col] = None
+            self.map_view.model.territory_city.pop(position, None)
+            self.map_view.set_hex_territory(position)
             if update_status:
-                self.status.set("Place a city before painting its territory.")
-            return False
+                self.status.set("Hex {}, {} is now unassigned.".format(col + 1, row + 1))
+            return True
         self.data["territories"][row][col] = list(city_position)
         self.map_view.model.territory_city[position] = city_position
         self.map_view.set_hex_territory(position)
@@ -337,11 +428,142 @@ class MapEditorApp(object):
             return False
         return self._paint_territory(position, update_status=False)
 
+    def _apply_city(self):
+        position = self.selected_city_position
+        if position is None:
+            self.status.set("Select a hex for the city first.")
+            return
+        col, row = position
+        name = self.city_name.get().strip()
+        owner = self._country_id_for_name(self.city_owner.get())
+        try:
+            level = self.city_level.get()
+            industry_level = self.industry_level.get()
+            research_level = self.research_level.get()
+        except tk.TclError:
+            self.status.set("City, industry, and research levels must be whole numbers.")
+            return
+        if (not name or len(name) > 30 or not owner or
+                not 1 <= level <= CITY_MAX_LEVEL or
+                not 1 <= industry_level <= 99 or not 1 <= research_level <= 99):
+            self.status.set("Set a valid city name, country, and levels (1 to 99).")
+            return
+        if self.data["terrain"][row][col] == "Water":
+            self.data["terrain"][row][col] = "Plain"
+            self.data["territories"][row][col] = None
+            self.data["rivers"] = [
+                edge for edge in self.data["rivers"]
+                if position not in (tuple(edge[0]), tuple(edge[1]))
+            ]
+        max_health = city_hp_for_level(level)
+        city = next((item for item in self.data["cities"]
+                     if (item["col"], item["row"]) == position), None)
+        if city:
+            health = min(city["health"], max_health)
+            city.update({"name": name, "owner": owner, "city_level": level,
+                         "industry_level": industry_level,
+                         "research_level": research_level,
+                         "health": health, "max_health": max_health})
+        else:
+            self.data["cities"].append({
+                "col": col, "row": row, "name": name, "owner": owner,
+                "city_level": level, "health": max_health, "max_health": max_health,
+                "industry_level": industry_level, "research_level": research_level,
+            })
+            self.data["territories"][row][col] = [col, row]
+        self._refresh_territory_choices()
+        self._replace_editor_model()
+        self.status.set("{} city updated.".format(name))
+
+    def _delete_city_at(self, position):
+        city = next((item for item in self.data["cities"]
+                     if (item["col"], item["row"]) == position), None)
+        if not city:
+            return False
+        self.data["cities"].remove(city)
+        for territory_row in self.data["territories"]:
+            for col, city_position in enumerate(territory_row):
+                if city_position is not None and tuple(city_position) == position:
+                    territory_row[col] = None
+        if self.selected_city_position == position:
+            self.selected_city_position = None
+        self._refresh_territory_choices()
+        self._replace_editor_model()
+        self.status.set("{} deleted; its land territory is unassigned.".format(city["name"]))
+        return True
+
+    def _delete_selected_city(self):
+        if self.selected_city_position is None or not self._delete_city_at(
+                self.selected_city_position):
+            self.status.set("Select a city to delete.")
+
+    def _toggle_river(self, position):
+        if self.river_start is None:
+            self.river_start = position
+            self.map_view.set_selection(position, None, None)
+            self.status.set("Choose a neighboring land hex to complete the river edge.")
+            return
+        first = self.river_start
+        self.river_start = None
+        if position not in hex_neighbors(self.data["columns"], self.data["rows"], first):
+            self.map_view.set_selection(None, None, None)
+            self.status.set("River endpoints must be neighboring hexes.")
+            return
+        if (self.data["terrain"][first[1]][first[0]] == "Water" or
+                self.data["terrain"][position[1]][position[0]] == "Water"):
+            self.map_view.set_selection(None, None, None)
+            self.status.set("Rivers can only be drawn between land hexes.")
+            return
+        edge = [list(first), list(position)]
+        key = frozenset((first, position))
+        existing = next((item for item in self.data["rivers"]
+                         if frozenset((tuple(item[0]), tuple(item[1]))) == key), None)
+        if existing:
+            self.data["rivers"].remove(existing)
+            self.status.set("River edge removed.")
+        else:
+            self.data["rivers"].append(edge)
+            self.status.set("River edge added.")
+        self._replace_editor_model()
+
     def _load_country_fields(self, country):
         self.country_name.set(country["name"])
         self.country_faction.set(country["faction"])
         for key, variable in self.country_resources.items():
             variable.set(country["resources"][key])
+        index = self.country_list_ids.index(country["id"])
+        color = country.get("color") or _country_colors(index, country["faction"])[0]
+        self._set_country_color(color)
+
+    def _set_country_color(self, color):
+        rgb = tuple(int(color[offset:offset + 2], 16) / 255.0
+                    for offset in (1, 3, 5))
+        hue, saturation, brightness = colorsys.rgb_to_hsv(*rgb)
+        self._loading_country_color = True
+        self.country_hue.set(hue * 360)
+        self.country_saturation.set(saturation * 100)
+        self.country_brightness.set(brightness * 100)
+        self._loading_country_color = False
+        self._update_country_color_preview()
+
+    def _update_country_color_preview(self, value=None):
+        if self._loading_country_color:
+            return
+        hue = self.country_hue.get()
+        saturation = self.country_saturation.get()
+        brightness = self.country_brightness.get()
+        self.country_hue_label.set("Hue {}".format(int(round(hue)) % 360))
+        self.country_saturation_label.set(
+            "Saturation {}%".format(int(round(saturation)))
+        )
+        self.country_brightness_label.set(
+            "Brightness {}%".format(int(round(brightness)))
+        )
+        rgb = colorsys.hsv_to_rgb((hue % 360) / 360.0,
+                                  saturation / 100.0, brightness / 100.0)
+        color = "#%02x%02x%02x" % tuple(int(round(channel * 255)) for channel in rgb)
+        self.country_color_hex.set(color)
+        self.country_color_swatch.configure(bg=color)
 
     def _select_country(self, event=None):
         selection = self.country_list.curselection()
@@ -360,6 +582,7 @@ class MapEditorApp(object):
             "id": "country_{}".format(index),
             "name": "Country {}".format(index),
             "faction": self.country_faction.get(),
+            "color": self.country_color_hex.get(),
             "resources": {"money": 16, "steel": 8, "technology": 3},
         }
         self.data["countries"].append(country)
@@ -393,6 +616,7 @@ class MapEditorApp(object):
             return
         country["name"] = name
         country["faction"] = self.country_faction.get()
+        country["color"] = self.country_color_hex.get()
         country["resources"] = resources
         self._refresh_country_controls(country["id"])
         self._replace_editor_model()
@@ -439,42 +663,37 @@ class MapEditorApp(object):
             if self.terrain.get() == "Water":
                 self.data["territories"][row][col] = None
                 self.map_view.model.territory_city.pop(position, None)
+                self.data["rivers"] = [
+                    edge for edge in self.data["rivers"]
+                    if position not in (tuple(edge[0]), tuple(edge[1]))
+                ]
             self.status.set("{} set at hex {}, {}.".format(self.terrain.get(), col + 1, row + 1))
         elif self.mode.get() == "Territory":
             self._paint_territory(position)
             return
+        elif self.mode.get() == "River":
+            self._toggle_river(position)
+            return
         elif self.mode.get() == "City":
-            name = self.city_name.get().strip()
-            if not name or len(name) > 30 or not city_owner:
-                self.status.set("Set a valid city name and country.")
-                return
-            try:
-                city_level = self.city_level.get()
-            except tk.TclError:
-                self.status.set("City level must be a whole number.")
-                return
-            if not 1 <= city_level <= CITY_MAX_LEVEL:
-                self.status.set("City level must be from 1 to {}.".format(CITY_MAX_LEVEL))
-                return
-            max_health = city_hp_for_level(city_level)
-            if self.data["terrain"][row][col] == "Water":
-                self.data["terrain"][row][col] = "Plain"
-            self.data["cities"] = [
-                city for city in self.data["cities"]
-                if (city["col"], city["row"]) != position
-            ]
-            self.data["cities"].append({
-                "col": col,
-                "row": row,
-                "name": name,
-                "owner": city_owner,
-                "city_level": city_level,
-                "health": max_health,
-                "max_health": max_health,
-            })
-            self.data["territories"][row][col] = [col, row]
-            self._refresh_territory_choices()
-            self.status.set("{} city placed at hex {}, {}.".format(name, col + 1, row + 1))
+            existing_city = self.map_view.model.cities.get(position)
+            self.selected_city_position = position
+            if existing_city:
+                self.city_name.set(existing_city["name"])
+                self.city_owner.set(next(
+                    country["name"] for country in self.data["countries"]
+                    if country["id"] == existing_city["owner"]))
+                self.city_level.set(existing_city["city_level"])
+                self.industry_level.set(existing_city["industry_level"])
+                self.research_level.set(existing_city["research_level"])
+                self.status.set("{} selected. Edit its fields and apply, or delete it.".format(
+                    existing_city["name"]))
+            else:
+                self.industry_level.set(1)
+                self.research_level.set(1)
+                self.status.set("Hex {}, {} selected. Set city properties and apply to place.".format(
+                    col + 1, row + 1))
+            self.map_view.set_selection(position, None, None)
+            return
         elif self.mode.get() == "Unit":
             if not unit_owner:
                 self.status.set("Add a country before placing starting units.")
@@ -496,23 +715,16 @@ class MapEditorApp(object):
                 self.unit_kind.get(), self.unit_owner.get(), col + 1, row + 1))
         else:
             self.data["terrain"][row][col] = "Plain"
-            removed_city_positions = [
-                (city["col"], city["row"]) for city in self.data["cities"]
-                if (city["col"], city["row"]) == position
-            ]
-            self.data["cities"] = [
-                city for city in self.data["cities"]
-                if (city["col"], city["row"]) != position
-            ]
+            self._delete_city_at(position)
             self.data["units"] = [
                 unit for unit in self.data["units"]
                 if (unit["col"], unit["row"]) != position
             ]
-            for territory_row in self.data["territories"]:
-                for territory_col, city_position in enumerate(territory_row):
-                    if city_position is not None and tuple(city_position) in removed_city_positions:
-                        territory_row[territory_col] = None
-            self._refresh_territory_choices()
+            self.data["territories"][row][col] = None
+            self.data["rivers"] = [
+                edge for edge in self.data["rivers"]
+                if position not in (tuple(edge[0]), tuple(edge[1]))
+            ]
             self.status.set("Hex {}, {} cleared.".format(col + 1, row + 1))
         self._replace_editor_model()
 
@@ -561,6 +773,10 @@ class MapEditorApp(object):
         resized["units"] = [
             unit for unit in self.data["units"]
             if unit["col"] < columns and unit["row"] < rows
+        ]
+        resized["rivers"] = [
+            edge for edge in self.data["rivers"]
+            if all(point[0] < columns and point[1] < rows for point in edge)
         ]
         surviving_cities = {(city["col"], city["row"]) for city in resized["cities"]}
         for territory_row in resized["territories"]:

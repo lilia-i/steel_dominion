@@ -1,10 +1,11 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from game_config import ENEMY, PLAYER, UNIT_TYPES
+from game_config import ENEMY, NEUTRAL, PLAYER, UNIT_TYPES
 from game_model import GameModel
 from hex_map import HexMapView
 from map_data import load_map_file
+from ui_helpers import ScrollableFrame
 
 
 INK = "#202c27"
@@ -21,15 +22,20 @@ class GameApp(object):
         self.root.minsize(900, 620)
         self.root.configure(bg=PAPER)
 
+        self.map_data = None
         self.model = GameModel()
-        self.resource_country_id = self.model.first_country_for(PLAYER)
+        self.player_country_id = self.model.player_country_id
+        self.pending_player_country_id = self.player_country_id
+        self.campaign_started = False
+        self.model.phase = "setup"
+        self.resource_country_id = self.player_country_id
         self.selected_hex = (2, 4)
-        self.selected_unit = self.model.unit_at(self.selected_hex)
+        self.selected_unit = None
         self.attack_target = None
         self.result_shown = False
-        self.message = "Select a unit to view its movement and attack options."
+        self.message = "Choose your country, then start the campaign."
         self._build_ui()
-        self._log("Campaign started. Hold London and Paris, then advance toward Berlin.")
+        self._log("Choose a country to begin the campaign.")
         self._refresh()
 
     def _build_ui(self):
@@ -74,10 +80,15 @@ class GameApp(object):
             tk.Label(box, textvariable=variable, bg=INK, fg="#f5f2e8",
                      font=("Consolas", 14, "bold")).pack(anchor="w", pady=(3, 0))
 
-        body = ttk.Frame(self.root, padding=(14, 14, 14, 12))
-        body.pack(fill="both", expand=True)
+        body = ttk.Panedwindow(self.root, orient="horizontal")
+        body.pack(fill="both", expand=True, padx=14, pady=(14, 12))
         map_frame = ttk.Frame(body)
-        map_frame.pack(side="left", fill="both", expand=True)
+        sidebar_pane = ttk.Frame(body, width=286)
+        body.add(map_frame, weight=4)
+        body.add(sidebar_pane, weight=1)
+        body.bind("<Configure>", lambda event: self._set_initial_sidebar_width(), add="+")
+        self.main_splitter = body
+        self._initial_sidebar_sash_set = False
         map_heading = ttk.Frame(map_frame)
         map_heading.pack(fill="x", pady=(0, 9))
         ttk.Label(map_heading, text="STRATEGIC MAP", font=("Segoe UI", 11, "bold")).pack(side="left")
@@ -88,9 +99,10 @@ class GameApp(object):
             bg="#dfe7df", highlightthickness=1, highlightbackground="#d2d6cd", cursor="fleur")
         self.map_view.pack(fill="both", expand=True)
 
-        sidebar = ttk.Frame(body, width=286)
-        sidebar.pack(side="right", fill="y", padx=(13, 0))
-        sidebar.pack_propagate(False)
+        sidebar_scroll = ScrollableFrame(sidebar_pane, canvas_bg=PAPER)
+        sidebar_scroll.pack(fill="both", expand=True)
+        sidebar = sidebar_scroll.content
+        self.sidebar_scroll = sidebar_scroll
 
         info = ttk.LabelFrame(sidebar, text="SECTOR INTEL", padding=12)
         info.pack(fill="x", pady=(0, 10))
@@ -103,6 +115,13 @@ class GameApp(object):
 
         commands = ttk.LabelFrame(sidebar, text="COMMAND", padding=12)
         commands.pack(fill="x", pady=(0, 10))
+        ttk.Label(commands, text="Play as country").pack(anchor="w", pady=(0, 3))
+        self.player_country_var = tk.StringVar()
+        self.player_country_choice = ttk.Combobox(
+            commands, textvariable=self.player_country_var, state="readonly")
+        self.player_country_choice.pack(fill="x", pady=(0, 8))
+        self.player_country_choice.bind("<<ComboboxSelected>>",
+                                       self._on_player_country_selected)
         ttk.Label(commands, text="Resource account").pack(anchor="w", pady=(0, 3))
         self.resource_country_var = tk.StringVar()
         self.country_choice = ttk.Combobox(
@@ -128,7 +147,7 @@ class GameApp(object):
         self.end_button.pack(fill="x", pady=(9, 3))
         self.load_map_button = ttk.Button(commands, text="Load map", command=self._load_map)
         self.load_map_button.pack(fill="x", pady=3)
-        self.restart_button = ttk.Button(commands, text="Restart campaign", command=self._restart)
+        self.restart_button = ttk.Button(commands, text="Start campaign", command=self._restart)
         self.restart_button.pack(fill="x", pady=3)
         self._update_unit_preview()
 
@@ -153,16 +172,22 @@ class GameApp(object):
                           bg="#dcded5", fg="#526057", font=("Segoe UI", 9))
         status.pack(fill="x", side="bottom")
 
+    def _set_initial_sidebar_width(self):
+        if self._initial_sidebar_sash_set or self.main_splitter.winfo_width() <= 1:
+            return
+        self._initial_sidebar_sash_set = True
+        self.main_splitter.sashpos(0, max(320, self.main_splitter.winfo_width() - 300))
+
     def _log(self, message):
         self.log_box.insert(0, "T{:02d}  {}".format(self.model.turn, message))
         while self.log_box.size() > 8:
             self.log_box.delete(tk.END)
 
     def _on_hex_click(self, position):
-        if self.model.phase != PLAYER:
+        if not self.campaign_started or self.model.phase != PLAYER:
             return
         unit = self.model.unit_at(position)
-        if unit and unit.faction == PLAYER:
+        if unit and unit.owner == self.player_country_id:
             self.selected_hex = position
             self.selected_unit = unit
             self.resource_country_id = unit.owner
@@ -179,12 +204,21 @@ class GameApp(object):
             self._refresh()
             return
 
-        if self.selected_unit and self.selected_unit.faction == PLAYER and not self.selected_unit.attacked:
+        if unit and self.model.faction_for(unit.owner) == NEUTRAL:
+            self.selected_hex = position
+            self.selected_unit = unit
+            self.attack_target = None
+            self.message = "Neutral units cannot be commanded or attacked."
+            self._refresh()
+            return
+
+        if (self.selected_unit and self.selected_unit.owner == self.player_country_id and
+                not self.selected_unit.attacked):
             distance = self.model.distance(self.selected_unit.position, position)
             city = self.model.cities.get(position)
-            hostile_target = (unit and unit.faction == ENEMY) or (
+            hostile_target = (unit and unit.faction == self.model.enemy_faction) or (
                 city and city["health"] > 0 and
-                self.model.faction_for(city["owner"]) == ENEMY)
+                self.model.faction_for(city["owner"]) == self.model.enemy_faction)
             if hostile_target and distance <= self.selected_unit.range:
                 self.attack_target = position
                 self.selected_hex = self.selected_unit.position
@@ -208,7 +242,7 @@ class GameApp(object):
         self.selected_unit = None
         self.attack_target = None
         city = self.model.cities.get(position)
-        if city and self.model.faction_for(city["owner"]) == PLAYER:
+        if city and self.model.faction_for(city["owner"]) == self.model.player_faction:
             self.resource_country_id = city["owner"]
         self.message = "{}: select a unit or recruit here.".format(city["name"]) if city else "Select one of your units."
         self._refresh()
@@ -234,7 +268,23 @@ class GameApp(object):
         selected_name = self.resource_country_var.get()
         self.resource_country_id = next(
             country_id for country_id, country in self.model.countries.items()
-            if country["name"] == selected_name and country["faction"] == PLAYER)
+            if country["name"] == selected_name and
+            country["faction"] == self.model.player_faction)
+        self._refresh()
+
+    def _on_player_country_selected(self, event=None):
+        if self.campaign_started:
+            self.player_country_var.set(self.model.country_name(self.player_country_id))
+            return
+        selected_name = self.player_country_var.get()
+        selected_id = next(
+            (country_id for country_id, country in self.model.countries.items()
+             if country["name"] == selected_name and country["faction"] != NEUTRAL),
+            None)
+        if selected_id is None:
+            return
+        self.pending_player_country_id = selected_id
+        self.message = "{} selected. Start the campaign to confirm.".format(selected_name)
         self._refresh()
 
     def _attack(self):
@@ -256,17 +306,20 @@ class GameApp(object):
         self._refresh()
 
     def _end_turn(self):
-        if self.model.phase != PLAYER:
+        if not self.campaign_started or self.model.phase != PLAYER:
             return
         self.model.phase = ENEMY
-        self.message = "Axis forces are taking their turn..."
+        self.message = "AI forces are taking their turn..."
         self._refresh()
         self.root.after(450, self._run_enemy_turn)
 
     def _run_enemy_turn(self):
         events, winner = self.model.enemy_turn()
         self._show_events(events)
-        self.selected_unit = None
+        self.selected_unit = next(
+            (unit for unit in self.model.units if unit.owner == self.player_country_id), None)
+        if self.selected_unit:
+            self.selected_hex = self.selected_unit.position
         self.attack_target = None
         self.message = events[-1] if events else "Enemy turn complete."
         self._refresh()
@@ -282,24 +335,45 @@ class GameApp(object):
             return
         self.result_shown = True
         if self.model.winner == PLAYER:
-            self.message = "Victory: all enemy cities have been captured."
+            self.message = "Victory: all opposing cities have been captured."
             title = "Campaign victory"
         else:
-            self.message = "Defeat: all Allied cities have fallen."
+            self.message = "Defeat: all of your faction's cities have fallen."
             title = "Campaign lost"
         self._refresh()
         messagebox.showinfo(title, self.message)
 
     def _restart(self):
-        self.model = GameModel()
-        self.resource_country_id = self.model.first_country_for(PLAYER)
-        self.selected_hex = (2, 4)
-        self.selected_unit = self.model.unit_at(self.selected_hex)
+        if self.campaign_started:
+            self.campaign_started = False
+            self.pending_player_country_id = self.player_country_id
+            self.model.phase = "setup"
+            self.selected_unit = None
+            self.attack_target = None
+            self.message = "Choose a country, then restart the campaign."
+            self._refresh()
+            return
+        self.player_country_id = self.pending_player_country_id
+        self._reset_campaign("Campaign started as {}.".format(
+            self.model.country_name(self.player_country_id)))
+
+    def _reset_campaign(self, message):
+        self.model = GameModel(self.map_data, self.player_country_id)
+        self.player_country_id = self.model.player_country_id
+        self.pending_player_country_id = self.player_country_id
+        self.campaign_started = True
+        self.resource_country_id = self.player_country_id
+        self.selected_unit = next(
+            (unit for unit in self.model.units if unit.owner == self.player_country_id), None)
+        self.selected_hex = (self.selected_unit.position if self.selected_unit else
+                             next(city["position"] for city in self.model.cities.values()
+                                  if city["owner"] == self.player_country_id))
         self.attack_target = None
         self.result_shown = False
-        self.message = "New campaign. Select a unit to begin."
+        self.message = message
         self.log_box.delete(0, tk.END)
-        self._log("Campaign started. Hold London and Paris, then advance toward Berlin.")
+        self._log("Campaign started as {}.".format(
+            self.model.country_name(self.player_country_id)))
         self.map_view.model = self.model
         self.map_view.fit_map(draw=False)
         self._refresh()
@@ -312,35 +386,55 @@ class GameApp(object):
         if not path:
             return
         try:
-            model = GameModel(load_map_file(path))
+            map_data = load_map_file(path)
+            model = GameModel(map_data, self.player_country_id)
         except (OSError, ValueError) as error:
             messagebox.showerror("Unable to load map", str(error), parent=self.root)
             return
 
         self.model = model
-        self.resource_country_id = model.first_country_for(PLAYER)
-        self.selected_unit = next(unit for unit in model.units if unit.faction == PLAYER)
-        self.selected_hex = self.selected_unit.position
+        self.map_data = map_data
+        self.player_country_id = model.player_country_id
+        self.pending_player_country_id = self.player_country_id
+        self.campaign_started = False
+        self.model.phase = "setup"
+        self.resource_country_id = self.player_country_id
+        self.selected_unit = None
+        self.selected_hex = next(city["position"] for city in model.cities.values()
+                                 if city["owner"] == self.player_country_id)
         self.attack_target = None
         self.result_shown = False
-        self.message = "Custom map loaded. Select a unit to begin."
+        self.message = "Custom map loaded. Choose your country, then start the campaign."
         self.log_box.delete(0, tk.END)
-        self._log("Custom map loaded with configured country resources and starting forces.")
+        self._log("Custom map loaded. Choose a country to begin.")
         self.map_view.model = model
         self.map_view.fit_map(draw=False)
         self._refresh()
 
     def _refresh(self):
-        player_cities = self.model.owned_cities(PLAYER)
+        player_cities = self.model.owned_cities(self.player_country_id)
         self.stat_vars["turn"].set(str(self.model.turn))
         self.stat_vars["cities"].set("{} / {}".format(player_cities, len(self.model.cities)))
         player_countries = [country for country in self.model.countries.values()
-                            if country["faction"] == PLAYER]
+                            if country["faction"] == self.model.faction_for(
+                                self.player_country_id)]
         if (self.resource_country_id not in self.model.countries or
-                self.model.faction_for(self.resource_country_id) != PLAYER):
-            self.resource_country_id = player_countries[0]["id"]
+                self.model.faction_for(self.resource_country_id) !=
+                self.model.faction_for(self.player_country_id)):
+            self.resource_country_id = self.player_country_id
         self.country_choice.configure(values=[country["name"] for country in player_countries])
+        self.country_choice.configure(state="readonly" if self.campaign_started else "disabled")
         self.resource_country_var.set(self.model.country_name(self.resource_country_id))
+        playable_countries = [country for country in self.model.countries.values()
+                              if country["faction"] != NEUTRAL]
+        self.player_country_choice.configure(
+            values=[country["name"] for country in playable_countries],
+            state="disabled" if self.campaign_started else "readonly")
+        display_country_id = (self.player_country_id if self.campaign_started else
+                              self.pending_player_country_id)
+        self.player_country_var.set(self.model.country_name(display_country_id))
+        self.restart_button.configure(
+            text="Restart campaign" if self.campaign_started else "Start campaign")
         resources = self.model.countries[self.resource_country_id]["resources"]
         for resource in ("money", "steel", "technology"):
             self.stat_vars[resource].set(str(resources[resource]))
@@ -348,7 +442,7 @@ class GameApp(object):
         city = self.model.cities.get(self.selected_hex)
         unit = self.selected_unit if self.selected_unit in self.model.units else None
         if unit:
-            side = "Allied" if unit.faction == PLAYER else "Axis"
+            side = self._country_control_label(unit.owner)
             if unit.attacks_left <= 0:
                 action = "Turn spent"
             elif unit.movement_left > 0:
@@ -367,7 +461,7 @@ class GameApp(object):
             if city:
                 self.info_details.set(self.info_details.get() + "\n\n" + self._city_details(city))
         elif city:
-            side = "Allied" if self.model.faction_for(city["owner"]) == PLAYER else "Axis"
+            side = self._country_control_label(city["owner"])
             self.info_name.set(city["name"])
             self.info_owner.set("{} / {} controlled city".format(
                 self.model.country_name(city["owner"]), side))
@@ -379,23 +473,38 @@ class GameApp(object):
             self.info_details.set("Coordinate: {}\nHills and forests reduce incoming damage.".format(
                 self._coord_label(self.selected_hex)))
 
-        can_command = (self.model.phase == PLAYER and unit and
-                   unit.faction == PLAYER and not unit.attacked)
-        can_recruit = (self.model.phase == PLAYER and city and
-                   self.model.faction_for(city["owner"]) == PLAYER)
+        can_command = (self.campaign_started and self.model.phase == PLAYER and unit and
+               unit.owner == self.player_country_id and not unit.attacked)
+        can_recruit = (self.campaign_started and self.model.phase == PLAYER and city and
+               city["owner"] == self.player_country_id)
         can_attack = can_command and self.attack_target is not None
         self.recruit_button.configure(state="normal" if can_recruit else "disabled")
         self.attack_button.configure(state="normal" if can_attack else "disabled")
         self.cancel_button.configure(state="normal" if self.attack_target is not None else "disabled")
-        self.end_button.configure(state="normal" if self.model.phase == PLAYER else "disabled")
+        self.end_button.configure(
+            state="normal" if self.campaign_started and self.model.phase == PLAYER else "disabled")
         self.load_map_button.configure(
-            state="normal" if self.model.phase in (PLAYER, "over") else "disabled")
-        self.map_view.set_selection(self.selected_hex, unit, self.attack_target)
+            state="normal" if self.campaign_started and self.model.phase in (PLAYER, "over")
+            else "disabled")
+        self.map_view.set_selection(
+            self.selected_hex if self.campaign_started else None,
+            unit if self.campaign_started else None,
+            self.attack_target if self.campaign_started else None)
         self.status_var.set(self.message)
 
     @staticmethod
     def _coord_label(position):
         return "{}-{}".format(position[0] + 1, position[1] + 1)
+
+    def _country_control_label(self, country_id):
+        faction = self.model.faction_for(country_id)
+        if faction == NEUTRAL:
+            return "Neutral"
+        if country_id == self.player_country_id:
+            return "Player controlled"
+        if faction == self.model.player_faction:
+            return "AI ally"
+        return "AI opponent"
 
     def _city_details(self, city):
         production = self.model.city_production(city)

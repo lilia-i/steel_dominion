@@ -1,10 +1,10 @@
 import json
 import re
 
-from game_config import ENEMY, PLAYER, TERRAIN_COLORS, UNIT_TYPES, city_hp_for_level
+from game_config import ENEMY, NEUTRAL, PLAYER, TERRAIN_COLORS, UNIT_TYPES, city_hp_for_level
 
 
-MAP_FORMAT_VERSION = 4
+MAP_FORMAT_VERSION = 7
 MIN_MAP_SIZE = 4
 MAX_MAP_SIZE = 200
 TERRAINS = tuple(TERRAIN_COLORS.keys())
@@ -28,6 +28,7 @@ def new_map_data(columns=10, rows=8):
         "rows": rows,
         "terrain": [["Plain" for _ in range(columns)] for _ in range(rows)],
         "territories": [[None for _ in range(columns)] for _ in range(rows)],
+        "rivers": [],
         "countries": [
             {"id": "allied", "name": "Allied State", "faction": PLAYER,
              "resources": dict(DEFAULT_RESOURCES)},
@@ -103,6 +104,25 @@ def _upgrade_v3_map(data):
          for col in range(data["columns"])]
         for row in range(data["rows"])
     ]
+    upgraded_map["version"] = 4
+    return upgraded_map
+
+
+def _upgrade_v4_map(data):
+    upgraded_map = dict(data)
+    upgraded_map["rivers"] = []
+    upgraded_map["version"] = 5
+    return upgraded_map
+
+
+def _upgrade_v5_map(data):
+    upgraded_map = dict(data)
+    upgraded_map["version"] = 6
+    return upgraded_map
+
+
+def _upgrade_v6_map(data):
+    upgraded_map = dict(data)
     upgraded_map["version"] = MAP_FORMAT_VERSION
     return upgraded_map
 
@@ -116,6 +136,12 @@ def normalize_map_data(data):
         data = _upgrade_v2_map(data)
     if data.get("version") == 3:
         data = _upgrade_v3_map(data)
+    if data.get("version") == 4:
+        data = _upgrade_v4_map(data)
+    if data.get("version") == 5:
+        data = _upgrade_v5_map(data)
+    if data.get("version") == 6:
+        data = _upgrade_v6_map(data)
     if data.get("version") != MAP_FORMAT_VERSION:
         raise ValueError("Unsupported map format version.")
 
@@ -152,11 +178,15 @@ def normalize_map_data(data):
         if country_id in country_ids or name.strip().casefold() in country_names:
             raise ValueError("Country IDs and names must be unique.")
         faction = country.get("faction")
-        if faction not in (PLAYER, ENEMY):
-            raise ValueError("Each country must belong to player or enemy faction.")
+        if faction not in (PLAYER, ENEMY, NEUTRAL):
+            raise ValueError("Each country must belong to player, enemy, or neutral faction.")
         resources = country.get("resources")
         if not isinstance(resources, dict):
             raise ValueError("Each country needs its own resource balances.")
+        color = country.get("color")
+        if color is not None and (not isinstance(color, str) or
+                                  not re.match(r"^#[0-9A-Fa-f]{6}$", color)):
+            raise ValueError("Country colors must be six-digit hexadecimal values.")
         normalized_resources = {}
         for resource in RESOURCE_KEYS:
             amount = resources.get(resource)
@@ -169,6 +199,7 @@ def normalize_map_data(data):
             "id": country_id,
             "name": name.strip(),
             "faction": faction,
+            "color": color.lower() if color else None,
             "resources": normalized_resources,
         })
 
@@ -204,7 +235,7 @@ def normalize_map_data(data):
         health = city.get("health", max_health)
         if (type(max_health) is not int or max_health != expected_max_health or
                 type(health) is not int or not 0 <= health <= max_health):
-            raise ValueError("City HP maximum must match its level (15 to 30 HP).")
+            raise ValueError("City HP maximum must match its level and configured maximum.")
         levels = {}
         for level_key in ("city_level", "industry_level", "research_level"):
             level = city_level if level_key == "city_level" else city.get(level_key, 1)
@@ -248,6 +279,32 @@ def normalize_map_data(data):
             normalized_row.append(list(city_position))
         normalized_territories.append(normalized_row)
 
+    rivers = data.get("rivers", [])
+    if not isinstance(rivers, list):
+        raise ValueError("Rivers must be a list of hex edges.")
+    normalized_rivers = []
+    river_edges = set()
+    for edge in rivers:
+        if not isinstance(edge, list) or len(edge) != 2:
+            raise ValueError("Each river must connect two adjacent hexes.")
+        endpoints = []
+        for point in edge:
+            if (not isinstance(point, list) or len(point) != 2 or
+                    type(point[0]) is not int or type(point[1]) is not int or
+                    not 0 <= point[0] < columns or not 0 <= point[1] < rows):
+                raise ValueError("River endpoints must be inside the map.")
+            if normalized_terrain[point[1]][point[0]] == "Water":
+                raise ValueError("Rivers can only be drawn between land hexes.")
+            endpoints.append(tuple(point))
+        first, second = sorted(endpoints)
+        edge_key = frozenset((first, second))
+        if first == second or second not in hex_neighbors(columns, rows, first):
+            raise ValueError("Each river must connect two adjacent hexes.")
+        if edge_key in river_edges:
+            raise ValueError("A river edge can only be drawn once.")
+        river_edges.add(edge_key)
+        normalized_rivers.append([list(first), list(second)])
+
     units = data.get("units")
     if not isinstance(units, list):
         raise ValueError("Starting units must be a list.")
@@ -281,6 +338,7 @@ def normalize_map_data(data):
         "rows": rows,
         "terrain": normalized_terrain,
         "territories": normalized_territories,
+        "rivers": normalized_rivers,
         "countries": normalized_countries,
         "cities": normalized_cities,
         "units": normalized_units,
@@ -296,7 +354,7 @@ def validate_playable_map(data):
             raise ValueError("Every country needs at least one city.")
     factions = {country["faction"] for country in normalized["countries"]}
     if PLAYER not in factions or ENEMY not in factions:
-        raise ValueError("A playable map needs countries in both enemy factions.")
+        raise ValueError("A playable map needs countries in both player and enemy factions.")
     unit_factions = {countries[unit["owner"]]["faction"] for unit in normalized["units"]}
     if PLAYER not in unit_factions or ENEMY not in unit_factions:
         raise ValueError("A playable map needs at least one starting unit for each faction.")
@@ -339,6 +397,17 @@ def assign_city_territories(columns, rows, city_positions):
                 assigned[neighbor] = assigned[(col, row)]
                 queue.append(neighbor)
     return assigned
+
+
+def hex_neighbors(columns, rows, position):
+    col, row = position
+    if row % 2:
+        directions = ((1, 0), (-1, 0), (0, -1), (1, -1), (0, 1), (1, 1))
+    else:
+        directions = ((1, 0), (-1, 0), (-1, -1), (0, -1), (-1, 1), (0, 1))
+    return [(col + delta_col, row + delta_row)
+            for delta_col, delta_row in directions
+            if 0 <= col + delta_col < columns and 0 <= row + delta_row < rows]
 
 
 def load_map_file(path):

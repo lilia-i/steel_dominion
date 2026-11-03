@@ -1,30 +1,23 @@
+import os
 import random
 import heapq
 
 from game_config import (
     CITY_HEAL_PER_TURN,
     CITY_PRODUCTION_PER_LEVEL,
-    CITY_SETUP,
-    COUNTRY_SETUP,
     DAMAGE_RANDOM_BONUS,
     DEFENSIVE_TERRAINS,
     ENEMY,
     INFANTRY_TYPE,
-    MAP_COLUMNS,
-    MAP_ROWS,
     MIN_DAMAGE,
+    NEUTRAL,
     PLAYER,
-    RIVER_EDGES,
-    STARTING_UNITS,
     TERRAIN_DEFENSE_BONUS,
-    TERRAIN_LAYOUT,
     TERRAIN_MOVEMENT_COST,
-    TERRITORY_LAYOUT,
     TRANSPORT_STATS,
     UNIT_TYPES,
-    city_hp_for_level,
 )
-from map_data import validate_playable_map
+from map_data import load_map_file, validate_playable_map
 
 class Unit(object):
     next_id = 1
@@ -83,36 +76,59 @@ class Unit(object):
 
 
 class GameModel(object):
-    columns = MAP_COLUMNS
-    rows = MAP_ROWS
-
-    def __init__(self, map_data=None):
+    def __init__(self, map_data=None, player_country_id=None):
         self.turn = 1
         self.phase = PLAYER
         self.winner = None
-        self.columns = MAP_COLUMNS
-        self.rows = MAP_ROWS
+        self.columns = 0
+        self.rows = 0
         self.tiles = {}
-        self.river_edges = {frozenset(edge) for edge in RIVER_EDGES}
+        self.river_edges = set()
         self.countries = {}
         self.cities = {}
         self.territory_city = {}
         self.units = []
         if map_data is None:
-            self._create_world()
-        else:
-            self._create_custom_world(map_data)
+            map_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    "default_map.json")
+            map_data = load_map_file(map_path)
+        self._create_custom_world(map_data)
+        eligible_countries = [country_id for country_id, country in self.countries.items()
+                              if country["faction"] != NEUTRAL]
+        if not eligible_countries:
+            raise ValueError("A campaign needs at least one non-neutral country.")
+        if player_country_id not in eligible_countries:
+            player_country_id = next(
+                (country_id for country_id in eligible_countries
+                 if self.countries[country_id]["faction"] == PLAYER),
+                eligible_countries[0])
+        self.player_country_id = player_country_id
+        self.player_faction = self.faction_for(player_country_id)
+        self.enemy_faction = ENEMY if self.player_faction == PLAYER else PLAYER
+
+    def can_control_unit(self, unit):
+        if unit not in self.units or unit.faction == NEUTRAL:
+            return False
+        if self.phase == PLAYER:
+            return unit.owner == self.player_country_id
+        if self.phase == ENEMY:
+            return unit.owner != self.player_country_id
+        return False
 
     def _create_custom_world(self, map_data):
         map_data = validate_playable_map(map_data)
         self.columns = map_data["columns"]
         self.rows = map_data["rows"]
-        self.river_edges = set()
+        self.river_edges = {
+            frozenset((tuple(edge[0]), tuple(edge[1])))
+            for edge in map_data["rivers"]
+        }
         for country_data in map_data["countries"]:
             self.countries[country_data["id"]] = {
                 "id": country_data["id"],
                 "name": country_data["name"],
                 "faction": country_data["faction"],
+                "color": country_data.get("color"),
                 "resources": dict(country_data["resources"]),
             }
         for row, terrain_row in enumerate(map_data["terrain"]):
@@ -145,44 +161,9 @@ class GameModel(object):
             self.units.append(Unit(unit_data["type"], unit_data["owner"],
                                    (unit_data["col"], unit_data["row"]), country["faction"]))
 
-    def _create_world(self):
-        for country_data in COUNTRY_SETUP:
-            self.countries[country_data["id"]] = {
-                "id": country_data["id"],
-                "name": country_data["name"],
-                "faction": country_data["faction"],
-                "resources": dict(country_data["resources"]),
-            }
-        terrain_positions = {
-            terrain: set(positions) for terrain, positions in TERRAIN_LAYOUT.items()
-        }
-        for row in range(self.rows):
-            for col in range(self.columns):
-                position = (col, row)
-                terrain = next((name for name, positions in terrain_positions.items()
-                                if position in positions), "Plain")
-                self.tiles[position] = terrain
-
-        for city in CITY_SETUP:
-            configured_city = dict(city)
-            configured_city["max_health"] = city_hp_for_level(city["city_level"])
-            configured_city["health"] = configured_city["max_health"]
-            self.cities[city["position"]] = configured_city
-        city_symbols = {
-            "L": (1, 4), "P": (3, 3), "G": (6, 3), "W": (7, 4), "M": (8, 5),
-        }
-        self.territory_city = {
-            (col, row): city_symbols[symbol]
-            for row, territory_row in enumerate(TERRITORY_LAYOUT)
-            for col, symbol in enumerate(territory_row)
-            if self.tiles[(col, row)] != "Water"
-        }
-        self.units.extend(Unit(kind, owner, position, self.countries[owner]["faction"])
-                          for kind, owner, position in STARTING_UNITS)
-
     @property
     def resources(self):
-        country_id = self.first_country_for(PLAYER)
+        country_id = self.player_country_id
         return self.countries[country_id]["resources"]
 
     def first_country_for(self, faction):
@@ -317,7 +298,7 @@ class GameModel(object):
     def recruit(self, city_position, kind):
         city = self.cities.get(city_position)
         if (self.phase != PLAYER or not city or
-                self.faction_for(city["owner"]) != PLAYER):
+                city["owner"] != self.player_country_id):
             return None, "Select one of your cities to recruit."
         if kind not in UNIT_TYPES:
             return None, "Unknown unit type."
@@ -341,14 +322,14 @@ class GameModel(object):
 
         for resource, amount in cost.items():
             resources[resource] -= amount
-        unit = Unit(kind, city["owner"], deployment, PLAYER)
+        unit = Unit(kind, city["owner"], deployment, self.faction_for(city["owner"]))
         unit.movement_left = unit.movement
         unit.attacks_left = unit.attacks_per_turn
         self.units.append(unit)
         return unit, "{} recruited in {}.".format(kind, city["name"])
 
     def move(self, unit, destination):
-        if (unit not in self.units or unit.faction != self.phase or unit.attacked or
+        if (not self.can_control_unit(unit) or unit.attacked or
                 unit.movement_left <= 0):
             return False, ["This unit cannot move now."]
         path = self.movement_paths(unit).get(destination)
@@ -391,12 +372,14 @@ class GameModel(object):
         return True, events
 
     def attack(self, attacker, target_position):
-        if (self.phase not in (PLAYER, ENEMY) or attacker not in self.units or
-                attacker.faction != self.phase or attacker.attacked):
+        if not self.can_control_unit(attacker) or attacker.attacked:
             return False, ["This unit cannot attack now."]
         defender = self.unit_at(target_position)
         city = self.cities.get(target_position)
-        hostile_city = (city and self.faction_for(city["owner"]) != attacker.faction and
+        if defender and self.faction_for(defender.owner) == NEUTRAL:
+            return False, ["Neutral units cannot be attacked."]
+        hostile_city = (city and self.faction_for(city["owner"]) not in
+                        (attacker.faction, NEUTRAL) and
                         city["health"] > 0)
         if defender and defender.faction == attacker.faction:
             return False, ["Select an opposing unit or city as the target."]
@@ -411,7 +394,7 @@ class GameModel(object):
             attacker.effective_attack + random.randint(*DAMAGE_RANDOM_BONUS) - terrain_bonus)))
         city_damage = 0
         unit_damage = damage
-        if city and self.faction_for(city["owner"]) != attacker.faction:
+        if city and self.faction_for(city["owner"]) not in (attacker.faction, NEUTRAL):
             if defender:
                 city_damage = damage // 2
                 unit_damage = damage - city_damage
@@ -444,7 +427,9 @@ class GameModel(object):
 
     def _capture_city(self, position, country_id):
         city = self.cities.get(position)
-        if not city or self.faction_for(city["owner"]) == self.faction_for(country_id):
+        if (not city or self.faction_for(city["owner"]) == NEUTRAL or
+            self.faction_for(country_id) == NEUTRAL or
+            self.faction_for(city["owner"]) == self.faction_for(country_id)):
             return []
         city["owner"] = country_id
         city["health"] = city["max_health"]
@@ -464,13 +449,16 @@ class GameModel(object):
         self.phase = ENEMY
         events = ["Enemy forces are taking their turn."]
         for enemy in list(self.units):
-            if enemy.faction != ENEMY or enemy not in self.units:
+            if (enemy.owner == self.player_country_id or
+                    enemy.faction == NEUTRAL or enemy not in self.units):
                 continue
-            player_units = [unit for unit in self.units if unit.faction == PLAYER]
-            player_cities = [position for position, city in self.cities.items()
-                             if self.faction_for(city["owner"]) == PLAYER]
-            targets = [unit.position for unit in player_units]
-            targets.extend(position for position in player_cities if position not in targets)
+            target_faction = (ENEMY if enemy.faction == PLAYER else PLAYER)
+            target_units = [unit for unit in self.units
+                            if unit.faction == target_faction]
+            target_cities = [position for position, city in self.cities.items()
+                             if self.faction_for(city["owner"]) == target_faction]
+            targets = [unit.position for unit in target_units]
+            targets.extend(position for position in target_cities if position not in targets)
             if not targets:
                 break
             target_position = min(targets, key=lambda position: self.distance(
@@ -494,9 +482,9 @@ class GameModel(object):
                     if moved:
                         events.extend(movement_events)
                         current_targets = [unit.position for unit in self.units
-                                           if unit.faction == PLAYER]
+                                           if unit.faction == target_faction]
                         current_targets.extend(position for position, city in self.cities.items()
-                                               if self.faction_for(city["owner"]) == PLAYER and
+                                               if self.faction_for(city["owner"]) == target_faction and
                                                position not in current_targets)
                         if current_targets:
                             target_position = min(current_targets, key=lambda position:
@@ -504,13 +492,15 @@ class GameModel(object):
                             if self.distance(enemy.position, target_position) <= enemy.range:
                                 _, attack_events = self.attack(enemy, target_position)
                                 events.extend(attack_events)
+            if self._check_winner():
+                break
 
         self.winner = self._check_winner()
         if self.winner:
             return events, self.winner
 
         self.turn += 1
-        income = self.income_for(PLAYER)
+        income = self.income_for(self.player_faction)
         for country_id, country in self.countries.items():
             country_income = self.income_for(country_id)
             for resource, amount in country_income.items():
@@ -525,10 +515,10 @@ class GameModel(object):
         return events, None
 
     def _check_winner(self):
-        if self.owned_cities(ENEMY) == 0:
+        if self.owned_cities(self.enemy_faction) == 0:
             self.phase = "over"
             self.winner = PLAYER
-        elif self.owned_cities(PLAYER) == 0:
+        elif self.owned_cities(self.player_faction) == 0:
             self.phase = "over"
             self.winner = ENEMY
         return self.winner

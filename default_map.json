@@ -1,0 +1,638 @@
+{
+  "version": 7,
+  "columns": 10,
+  "rows": 8,
+  "terrain": [
+    [
+      "Water",
+      "Plain",
+      "Plain",
+      "Plain",
+      "Plain",
+      "Plain",
+      "Plain",
+      "Plain",
+      "Water",
+      "Water"
+    ],
+    [
+      "Water",
+      "Plain",
+      "Plain",
+      "Hill",
+      "Forest",
+      "Plain",
+      "Plain",
+      "Forest",
+      "Plain",
+      "Water"
+    ],
+    [
+      "Plain",
+      "Hill",
+      "Forest",
+      "Plain",
+      "Plain",
+      "Hill",
+      "Plain",
+      "Plain",
+      "Plain",
+      "Plain"
+    ],
+    [
+      "Plain",
+      "Plain",
+      "Plain",
+      "Plain",
+      "Hill",
+      "Plain",
+      "Plain",
+      "Plain",
+      "Forest",
+      "Plain"
+    ],
+    [
+      "Plain",
+      "Plain",
+      "Plain",
+      "Plain",
+      "Plain",
+      "Plain",
+      "Plain",
+      "Plain",
+      "Plain",
+      "Plain"
+    ],
+    [
+      "Plain",
+      "Plain",
+      "Plain",
+      "Plain",
+      "Forest",
+      "Plain",
+      "Hill",
+      "Plain",
+      "Plain",
+      "Plain"
+    ],
+    [
+      "Water",
+      "Plain",
+      "Forest",
+      "Hill",
+      "Plain",
+      "Forest",
+      "Plain",
+      "Hill",
+      "Plain",
+      "Water"
+    ],
+    [
+      "Water",
+      "Water",
+      "Plain",
+      "Plain",
+      "Plain",
+      "Plain",
+      "Plain",
+      "Plain",
+      "Water",
+      "Water"
+    ]
+  ],
+  "territories": [
+    [
+      null,
+      [
+        1,
+        4
+      ],
+      [
+        1,
+        4
+      ],
+      [
+        1,
+        4
+      ],
+      [
+        3,
+        3
+      ],
+      [
+        3,
+        3
+      ],
+      [
+        3,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      null,
+      null
+    ],
+    [
+      null,
+      [
+        1,
+        4
+      ],
+      [
+        1,
+        4
+      ],
+      [
+        1,
+        4
+      ],
+      [
+        3,
+        3
+      ],
+      [
+        3,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        8,
+        5
+      ],
+      null
+    ],
+    [
+      [
+        1,
+        4
+      ],
+      [
+        1,
+        4
+      ],
+      [
+        1,
+        4
+      ],
+      [
+        3,
+        3
+      ],
+      [
+        3,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        8,
+        5
+      ],
+      [
+        8,
+        5
+      ]
+    ],
+    [
+      [
+        1,
+        4
+      ],
+      [
+        1,
+        4
+      ],
+      [
+        3,
+        3
+      ],
+      [
+        3,
+        3
+      ],
+      [
+        3,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        7,
+        4
+      ],
+      [
+        7,
+        4
+      ],
+      [
+        8,
+        5
+      ]
+    ],
+    [
+      [
+        1,
+        4
+      ],
+      [
+        1,
+        4
+      ],
+      [
+        3,
+        3
+      ],
+      [
+        3,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        7,
+        4
+      ],
+      [
+        7,
+        4
+      ],
+      [
+        8,
+        5
+      ]
+    ],
+    [
+      [
+        1,
+        4
+      ],
+      [
+        3,
+        3
+      ],
+      [
+        3,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        7,
+        4
+      ],
+      [
+        7,
+        4
+      ],
+      [
+        8,
+        5
+      ],
+      [
+        8,
+        5
+      ]
+    ],
+    [
+      null,
+      [
+        3,
+        3
+      ],
+      [
+        3,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        7,
+        4
+      ],
+      [
+        7,
+        4
+      ],
+      [
+        8,
+        5
+      ],
+      null
+    ],
+    [
+      null,
+      null,
+      [
+        3,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        7,
+        4
+      ],
+      [
+        7,
+        4
+      ],
+      null,
+      null
+    ]
+  ],
+  "rivers": [
+    [
+      [
+        2,
+        1
+      ],
+      [
+        2,
+        2
+      ]
+    ],
+    [
+      [
+        2,
+        1
+      ],
+      [
+        3,
+        0
+      ]
+    ],
+    [
+      [
+        2,
+        2
+      ],
+      [
+        2,
+        3
+      ]
+    ],
+    [
+      [
+        2,
+        3
+      ],
+      [
+        3,
+        4
+      ]
+    ],
+    [
+      [
+        3,
+        4
+      ],
+      [
+        3,
+        5
+      ]
+    ],
+    [
+      [
+        3,
+        5
+      ],
+      [
+        3,
+        6
+      ]
+    ],
+    [
+      [
+        3,
+        6
+      ],
+      [
+        3,
+        7
+      ]
+    ]
+  ],
+  "countries": [
+    {
+      "id": "britain",
+      "name": "Britain",
+      "faction": "player",
+      "color": null,
+      "resources": {
+        "money": 16,
+        "steel": 8,
+        "technology": 3
+      }
+    },
+    {
+      "id": "france",
+      "name": "France",
+      "faction": "player",
+      "color": null,
+      "resources": {
+        "money": 12,
+        "steel": 6,
+        "technology": 2
+      }
+    },
+    {
+      "id": "germany",
+      "name": "Germany",
+      "faction": "enemy",
+      "color": null,
+      "resources": {
+        "money": 16,
+        "steel": 8,
+        "technology": 3
+      }
+    },
+    {
+      "id": "poland",
+      "name": "Poland",
+      "faction": "enemy",
+      "color": null,
+      "resources": {
+        "money": 10,
+        "steel": 5,
+        "technology": 1
+      }
+    },
+    {
+      "id": "soviet",
+      "name": "Soviet Union",
+      "faction": "enemy",
+      "color": null,
+      "resources": {
+        "money": 14,
+        "steel": 7,
+        "technology": 2
+      }
+    }
+  ],
+  "cities": [
+    {
+      "col": 1,
+      "row": 4,
+      "name": "London",
+      "owner": "britain",
+      "health": 180,
+      "max_health": 180,
+      "city_level": 2,
+      "industry_level": 1,
+      "research_level": 1
+    },
+    {
+      "col": 3,
+      "row": 3,
+      "name": "Paris",
+      "owner": "france",
+      "health": 150,
+      "max_health": 150,
+      "city_level": 1,
+      "industry_level": 2,
+      "research_level": 1
+    },
+    {
+      "col": 6,
+      "row": 3,
+      "name": "Berlin",
+      "owner": "germany",
+      "health": 180,
+      "max_health": 180,
+      "city_level": 2,
+      "industry_level": 2,
+      "research_level": 1
+    },
+    {
+      "col": 7,
+      "row": 4,
+      "name": "Warsaw",
+      "owner": "poland",
+      "health": 150,
+      "max_health": 150,
+      "city_level": 1,
+      "industry_level": 1,
+      "research_level": 2
+    },
+    {
+      "col": 8,
+      "row": 5,
+      "name": "Moscow",
+      "owner": "soviet",
+      "health": 180,
+      "max_health": 180,
+      "city_level": 2,
+      "industry_level": 1,
+      "research_level": 2
+    }
+  ],
+  "units": [
+    {
+      "col": 1,
+      "row": 4,
+      "type": "Tank",
+      "owner": "britain"
+    },
+    {
+      "col": 2,
+      "row": 4,
+      "type": "Infantry",
+      "owner": "britain"
+    },
+    {
+      "col": 3,
+      "row": 3,
+      "type": "Artillery",
+      "owner": "france"
+    },
+    {
+      "col": 6,
+      "row": 3,
+      "type": "Infantry",
+      "owner": "germany"
+    },
+    {
+      "col": 6,
+      "row": 4,
+      "type": "Tank",
+      "owner": "poland"
+    },
+    {
+      "col": 7,
+      "row": 4,
+      "type": "Infantry",
+      "owner": "poland"
+    },
+    {
+      "col": 8,
+      "row": 5,
+      "type": "Artillery",
+      "owner": "soviet"
+    }
+  ]
+}

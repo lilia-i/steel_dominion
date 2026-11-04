@@ -3,6 +3,7 @@ import tkinter as tk
 import colorsys
 
 from game_config import NEUTRAL, PLAYER, TERRAIN_COLORS
+from unit_effects import morale_level_for
 
 
 INK_COLOR = "#202c27"
@@ -284,24 +285,60 @@ class HexMapView(tk.Canvas):
                 player_country_id = getattr(self.model, "player_country_id", None)
                 is_player_unit = (unit.owner == player_country_id if player_country_id
                                  else unit.faction == PLAYER)
-                if is_player_unit and not unit.attacked:
-                    ready_ring = 3 * self.zoom
-                    self.create_oval(center_x - badge - ready_ring, unit_y - badge - ready_ring,
-                                     center_x + badge + ready_ring, unit_y + badge + ready_ring,
-                                     fill="", outline="#d0a44c", width=max(1, self.zoom),
-                                     tags="action-ready")
+                if (is_player_unit and self.model.phase == PLAYER and
+                    unit.movement_left > 0 and not unit.attacked):
+                    marker_size = max(2, 4 * self.zoom)
+                    offset = badge + 5 * self.zoom
+                    for delta_x, delta_y in ((0, -1), (1, 0), (0, 1), (-1, 0)):
+                        marker_x = center_x + delta_x * offset
+                        marker_y = unit_y + delta_y * offset
+                        if delta_y < 0:
+                            points = (marker_x, marker_y - marker_size,
+                                      marker_x - marker_size, marker_y + marker_size / 2,
+                                      marker_x + marker_size, marker_y + marker_size / 2)
+                        elif delta_y > 0:
+                            points = (marker_x, marker_y + marker_size,
+                                      marker_x - marker_size, marker_y - marker_size / 2,
+                                      marker_x + marker_size, marker_y - marker_size / 2)
+                        elif delta_x < 0:
+                            points = (marker_x - marker_size, marker_y,
+                                      marker_x + marker_size / 2, marker_y - marker_size,
+                                      marker_x + marker_size / 2, marker_y + marker_size)
+                        else:
+                            points = (marker_x + marker_size, marker_y,
+                                      marker_x - marker_size / 2, marker_y - marker_size,
+                                      marker_x - marker_size / 2, marker_y + marker_size)
+                        self.create_polygon(*points, fill="#d0a44c", outline="",
+                                            tags="action-ready")
                 self.create_oval(center_x - badge, unit_y - badge,
                                  center_x + badge, unit_y + badge,
                                  fill=unit_color, outline="#fff9e9", width=max(1, self.zoom))
                 mark = "S" if unit.embarked else {"Infantry": "I", "Tank": "T", "Artillery": "A"}[unit.kind]
                 self.create_text(center_x, unit_y, text=mark, fill="white",
                                  font=("Segoe UI", max(7, int(10 * self.zoom)), "bold"))
+                morale_level = morale_level_for(unit)
+                if morale_level:
+                    marker_x = center_x + badge * 0.62
+                    marker_y = unit_y - badge * 0.58
+                    marker_size = max(5, badge * 0.6)
+                    if morale_level > 0:
+                        self._draw_morale_arrow(
+                            marker_x, marker_y, marker_size, "up", "#f0c83e")
+                    elif morale_level <= -2:
+                        overlap = marker_size * 0.24
+                        for offset in (-overlap, overlap):
+                            self._draw_morale_arrow(
+                                marker_x + offset, marker_y, marker_size,
+                                "down", "#505050")
+                    else:
+                        self._draw_morale_arrow(
+                            marker_x, marker_y, marker_size, "down", "#a5a5a5")
                 bar_width = 23 * self.zoom
                 bar_y = unit_y + 15 * self.zoom
                 self.create_rectangle(center_x - bar_width / 2, bar_y,
                                       center_x + bar_width / 2, bar_y + 3 * self.zoom,
                                       fill="#f2eee2", outline="")
-                health_color = ("#87a777" if is_player_unit else
+                health_color = ("#87a777" if unit_faction == self.model.player_faction else
                                 "#999999" if unit_faction == NEUTRAL else "#cf7564")
                 self.create_rectangle(center_x - bar_width / 2, bar_y,
                                       center_x - bar_width / 2 + bar_width * unit.hp / unit.max_hp,
@@ -332,28 +369,70 @@ class HexMapView(tk.Canvas):
             self.selected_unit.owner == getattr(self.model, "player_country_id", None) and
                 not self.selected_unit.attacked):
             if self.selected_unit.movement_left > 0:
-                for position in self.model.movement_paths(self.selected_unit):
+                reachable = set(self.model.movement_paths(self.selected_unit))
+                edge_hexes = {
+                    position for position in reachable
+                    if len(self.model.neighbors(position)) < 6 or
+                    any(neighbor not in reachable
+                        for neighbor in self.model.neighbors(position))
+                }
+                for position in edge_hexes:
                     center_x, center_y = self._screen_center(position)
                     self.create_polygon(self._hex_points(center_x, center_y, radius),
-                                        fill="", outline="#d0a44c", dash=(4, 3),
-                                        width=max(1, self.zoom), tags="move-range")
+                                        fill="", outline="#c08d28",
+                                        width=max(3, self.zoom * 4), tags="move-range")
             for enemy in self.model.units:
-                if enemy.faction == self.selected_unit.faction:
+                if enemy.faction in (self.selected_unit.faction, NEUTRAL):
                     continue
                 if self.model.distance(self.selected_unit.position, enemy.position) <= self.selected_unit.range:
                     center_x, center_y = self._screen_center(enemy.position)
-                    self.create_polygon(self._hex_points(center_x, center_y, radius),
-                                        fill="", outline="#b95849", dash=(3, 2),
-                                        width=max(1, self.zoom), tags="attack-range")
+                    self._draw_attack_marker(center_x, center_y, radius)
             for position, city in self.model.cities.items():
                 if (city["health"] > 0 and
                         self.model.faction_for(city["owner"]) != self.selected_unit.faction and
                         self.model.distance(self.selected_unit.position, position) <=
                         self.selected_unit.range):
                     center_x, center_y = self._screen_center(position)
-                    self.create_polygon(self._hex_points(center_x, center_y, radius),
-                                        fill="", outline="#b95849", dash=(3, 2),
-                                        width=max(1, self.zoom), tags="attack-range")
+                    self._draw_attack_marker(center_x, center_y, radius)
+
+    def _draw_attack_marker(self, center_x, center_y, radius):
+        marker_radius = radius * 0.62
+        arm = radius * 0.9
+        gap = radius * 0.38
+        color = "#74352f"
+        width = max(2, self.zoom * 2.5)
+        self.create_oval(center_x - marker_radius, center_y - marker_radius,
+                         center_x + marker_radius, center_y + marker_radius,
+                         fill="", outline=color, width=width, tags="attack-range")
+        for start_x, start_y, end_x, end_y in (
+                (-arm, 0, -gap, 0), (gap, 0, arm, 0),
+                (0, -arm, 0, -gap), (0, gap, 0, arm)):
+            self.create_line(center_x + start_x, center_y + start_y,
+                             center_x + end_x, center_y + end_y,
+                             fill=color, width=width, capstyle=tk.ROUND,
+                             tags="attack-range")
+
+    def _draw_morale_arrow(self, center_x, center_y, size, direction, color):
+        half = size / 2.0
+        stem = size * 0.28
+        if direction == "up":
+            points = (center_x, center_y - half,
+                      center_x + half, center_y,
+                      center_x + stem / 2, center_y,
+                      center_x + stem / 2, center_y + half,
+                      center_x - stem / 2, center_y + half,
+                      center_x - stem / 2, center_y,
+                      center_x - half, center_y)
+        else:
+            points = (center_x, center_y + half,
+                      center_x + half, center_y,
+                      center_x + stem / 2, center_y,
+                      center_x + stem / 2, center_y - half,
+                      center_x - stem / 2, center_y - half,
+                      center_x - stem / 2, center_y,
+                      center_x - half, center_y)
+        self.create_polygon(*points, fill=color, outline="#303030",
+                            width=max(1, self.zoom), tags="unit-status")
 
     def _on_press(self, event):
         self.drag_origin = (event.x, event.y)

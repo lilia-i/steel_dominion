@@ -23,6 +23,12 @@ Use **Settings** to browse playable JSON maps, choose a country before starting,
 
 In the editor, drag the divider to resize the tools sidebar and map; the sidebar scrolls when its contents exceed the window height. Choose a terrain, city, territory, river, starting unit, or erase tool. Select a city and click or drag over land hexes to paint its territory; choose **Unassigned (clear)** to remove a land hex from its city. In the City tool, click an existing city to edit its name, owner, city level, industry level, or research level, then apply the changes or delete it. To add or remove a river, click its two neighboring land hexes; clicking an existing river edge toggles it off. Hold Shift while dragging to pan. Sea hexes never belong to a city. New cities claim only their own land hex until you paint more territory. Every land hex must be assigned, and every city must own at least one hex before a map can be played. Use the **Countries** tab to add countries, assign each to player, enemy, or neutral faction, and set its independent starting resources. Adjust a country's hue, saturation, and brightness with the HSB sliders; the swatch updates live and its hex color is saved with the map. Neutral territory appears gray; its configured country color remains stored and appears if the country is later reassigned to a faction. In-game joining is not implemented. City HP follows the configured city-level values. Map dimensions can be set from 4 to 200 columns and rows. Zoom out for the overview; large maps can be panned. Save maps as JSON in the `maps` folder to make them available under **Choose map**. Maps can start without units; recruit at cities during the campaign. Older map files are upgraded when opened.
 
+## Campaign Rules
+
+Embarking and landing both require a unit to start its move with full movement points.
+
+Click a non-neutral country's territory and confirm the in-app prompt to start the campaign as that country. Settings no longer contains a Start campaign control; use it to browse maps or restart a running campaign. During your turn, clicking an enemy unit or living enemy city in range attacks it immediately; the Settings target command remains available as an alternate route. Movement highlights exclude occupied hexes and living enemy cities, which also block pathing. Entering water requires a unit to start the move with all movement points available, and water transitions use the full movement allowance. Newly recruited units cannot move during their recruitment turn. The AI recruits affordable units and uses its forces to pursue enemy cities and targets. Four yellow direction markers indicate a unit that has not acted, thick solid outlines show reachable hexes, and dark red reticles mark attackable enemies. Status icons appear beside units on the map; skill and status icons open an in-app description panel.
+
 ## Modules
 
 - `game_config.py`: unit balance, terrain costs, city HP/recovery, and combat constants
@@ -37,7 +43,7 @@ In the editor, drag the divider to resize the tools sidebar and map; the sidebar
 
 ## Update Log
 
-### 2026-11-03
+### v0.2
 - Added a map resource strip and a selection info overlay; moved unit details and recruitment into modal in-window panels.
 - Added EU city industry and research levels, including level 0, with player and enemy production totals balanced.
 - Improved map interaction with camera-style panning, city-territory borders, and overview mode at 40 pixels per hex.
@@ -48,3 +54,16 @@ In the editor, drag the divider to resize the tools sidebar and map; the sidebar
 - Prioritized AI capture of open enemy cities, added target-spread scoring, and implemented extensible unit skills plus morale statuses.
 - Extended skill/status hooks for action gating, target resolution, terrain-aware damage, and incoming damage modifiers; no additional effects were added.
 - Added 75% in-range counterattacks and replaced artillery's damage bonus with suppressive fire that prevents counterattacks.
+
+### v0.3
+- Added AI recruitment for affordable units and prevented newly recruited units from moving on their recruitment turn.
+- Required full movement points to embark or land, and kept enemy units and living enemy cities impassable.
+- Added setup-time country confirmation from territory clicks and immediate attacks when clicking an in-range enemy.
+- Replaced system skill popups with in-app description panels and presented skills as clickable icons.
+- Made action readiness, reachable hexes, attackable targets, and unit statuses more visible on the map.
+- Set the initial window size to the 640 x 420 minimum.
+- Simplified unit details to show maximum movement only and removed the Field Status panel.
+- Replaced recruit radio buttons with whole-row unit selection and aligned each unit's stats in shared columns.
+- Limited movement-range outlines to the outer ring of reachable hexes.
+- Combined morale effects by level: high morale offsets flanking, while surrounding reduces boosted morale to one level below normal; effects update when statuses expire or formations break.
+- Displayed each resource account's per-turn income beside its current stock in the top bar.

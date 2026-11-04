@@ -75,6 +75,7 @@ class UnitStatus(object):
     icon = "?"
     description = ""
     attack_multiplier = 1.0
+    morale_level = None
     tactical = False
 
     def can_move(self, model, unit):
@@ -107,6 +108,7 @@ class MoraleBoost(UnitStatus):
     icon = "+"
     description = "A kill has a 33% chance to grant +25% attack for 3 rounds."
     attack_multiplier = 1.25
+    morale_level = 1
 
     def __init__(self):
         self.rounds_left = 3
@@ -121,6 +123,7 @@ class FlankedMorale(UnitStatus):
     icon = "!"
     description = "Two opposing units on opposite sides reduce attack by 25%."
     attack_multiplier = 0.75
+    morale_level = -1
     tactical = True
 
     def applies(self, model, unit):
@@ -132,6 +135,7 @@ class SurroundedMorale(UnitStatus):
     icon = "X"
     description = "Opposing units in all six neighboring hexes reduce attack by 50%."
     attack_multiplier = 0.5
+    morale_level = -2
     tactical = True
 
     def applies(self, model, unit):
@@ -154,9 +158,20 @@ def get_unit_statuses(unit):
 
 def attack_multiplier_for(unit):
     result = 1.0
+    morale_level = 0
     for status in unit.statuses:
-        result *= status.attack_multiplier
+        if status.morale_level is None:
+            result *= status.attack_multiplier
+        else:
+            morale_level += status.morale_level
+    if morale_level:
+        result *= 1.0 + 0.25 * morale_level
     return result
+
+
+def morale_level_for(unit):
+    return sum(status.morale_level for status in unit.statuses
+               if status.morale_level is not None)
 
 
 def unit_can_move(model, unit):

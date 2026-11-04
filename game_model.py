@@ -246,12 +246,17 @@ class GameModel(object):
                     continue
                 city = self.cities.get(neighbor)
                 if (city and city["health"] > 0 and
-                        self.faction_for(city["owner"]) != unit.faction):
+                    city["owner"] != unit.owner):
                     continue
 
                 current_is_water = self.tiles[position] == "Water"
                 next_is_water = self.tiles[neighbor] == "Water"
-                if current_is_water != next_is_water or self.crosses_river(position, neighbor):
+                if current_is_water != next_is_water:
+                    if (spent > 0 or budget != unit.movement or
+                            unit.movement_left != unit.movement):
+                        continue
+                    next_spent = budget
+                elif self.crosses_river(position, neighbor):
                     next_spent = budget
                 else:
                     next_spent = spent + self.terrain_movement_cost(unit, self.tiles[neighbor])
@@ -333,8 +338,8 @@ class GameModel(object):
         for resource, amount in cost.items():
             resources[resource] -= amount
         unit = Unit(kind, city["owner"], deployment, self.faction_for(city["owner"]))
-        unit.movement_left = unit.movement
-        unit.attacks_left = unit.attacks_per_turn
+        unit.movement_left = 0
+        unit.attacks_left = 0
         self.units.append(unit)
         return unit, "{} recruited in {}.".format(kind, city["name"])
 
@@ -410,8 +415,8 @@ class GameModel(object):
         hostile_city = (city if city and self.faction_for(city["owner"]) not in
                         (attacker.faction, NEUTRAL) else None)
         damage = max(MIN_DAMAGE, int(round(
-            attacker.effective_attack + random.randint(*DAMAGE_RANDOM_BONUS) -
-            terrain_bonus)))
+            attacker.effective_attack *
+            (1.0 + random.uniform(*DAMAGE_RANDOM_BONUS)) - terrain_bonus)))
         city_damage = 0
         unit_damage = damage
         if city and self.faction_for(city["owner"]) not in (attacker.faction, NEUTRAL):
@@ -462,11 +467,6 @@ class GameModel(object):
                 self.country_name(defender.owner), defender.kind))
             refresh_tactical_statuses(self)
             events.extend(process_kill(self, attacker))
-            can_advance = (not city or self.faction_for(city["owner"]) == attacker.faction or
-                           city["health"] <= 0)
-            if attacker.kind != "Artillery" and can_advance:
-                attacker.position = target_position
-                events.extend(self._capture_city(target_position, attacker.owner))
         elif (defender and defender in self.units and
               self.distance(attacker.position, defender.position) <= defender.range):
             events.extend(self._counterattack(attacker, defender, target_position))
@@ -482,8 +482,8 @@ class GameModel(object):
         terrain_bonus = (TERRAIN_DEFENSE_BONUS
                          if terrain in DEFENSIVE_TERRAINS else 0)
         damage = max(MIN_DAMAGE, int(round(
-            defender.effective_attack * 0.75 +
-            random.randint(*DAMAGE_RANDOM_BONUS) - terrain_bonus)))
+            defender.effective_attack * 0.75 *
+            (1.0 + random.uniform(*DAMAGE_RANDOM_BONUS)) - terrain_bonus)))
         damage = max(MIN_DAMAGE, int(round(
             damage * damage_multiplier_for(
                 self, defender, attacker, None, "unit", terrain) *
@@ -532,6 +532,44 @@ class GameModel(object):
             priorities[position] = 0 if city["health"] <= 0 else 1
         return [(priority, position) for position, priority in priorities.items()]
 
+    def _ai_recruit(self):
+        events = []
+        for owner_id, country in self.countries.items():
+            if owner_id == self.player_country_id or country["faction"] == NEUTRAL:
+                continue
+            resources = country["resources"]
+            kinds = ["Tank", "Artillery", "Infantry"]
+            kind = next((candidate for candidate in kinds
+                         if all(resources[resource] >= amount
+                                for resource, amount in
+                                UNIT_TYPES[candidate]["cost"].items())), None)
+            if kind is None:
+                continue
+            deployment = None
+            city_name = None
+            for city_position, city in self.cities.items():
+                if city["owner"] != owner_id:
+                    continue
+                city_name = city["name"]
+                if self.unit_at(city_position) is None:
+                    deployment = city_position
+                    break
+                deployment = next((position for position in self.neighbors(city_position)
+                                   if self.tiles[position] != "Water" and
+                                   self.unit_at(position) is None), None)
+                if deployment is not None:
+                    break
+            if deployment is None:
+                continue
+            for resource, amount in UNIT_TYPES[kind]["cost"].items():
+                resources[resource] -= amount
+            unit = Unit(kind, owner_id, deployment, country["faction"])
+            unit.movement_left = 0
+            unit.attacks_left = 0
+            self.units.append(unit)
+            events.append("{} recruited in {}.".format(kind, city_name))
+        return events
+
     def _enemy_target_score(self, enemy, priority, position, from_position=None):
         source = from_position if from_position is not None else enemy.position
         distance = self.distance(source, position)
@@ -556,6 +594,7 @@ class GameModel(object):
 
         self.phase = ENEMY
         events = ["Enemy forces are taking their turn."]
+        events.extend(self._ai_recruit())
         for enemy in list(self.units):
             if (enemy.owner == self.player_country_id or
                     enemy.faction == NEUTRAL or enemy not in self.units):

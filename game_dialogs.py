@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import ttk
 
 from game_config import ENEMY, NEUTRAL, PLAYER, UNIT_TYPES
 from unit_effects import get_unit_skills, get_unit_statuses
@@ -13,7 +13,18 @@ GREEN = "#47745f"
 
 
 def _show_effect_info(parent, effect):
-    messagebox.showinfo(effect.name, effect.description, parent=parent)
+    EffectInfoDialog(parent.winfo_toplevel(), effect)
+
+
+def _effect_icon(parent, effect):
+    icon = tk.Label(parent, text=effect.icon, width=2, bg=PAPER, fg=INK,
+                    font=("Segoe UI", 10, "bold"), cursor="hand2", bd=0,
+                    takefocus=True)
+    icon.bind("<Button-1>", lambda event: _show_effect_info(parent, effect))
+    icon.bind("<Return>", lambda event: _show_effect_info(parent, effect))
+    icon.bind("<Enter>", lambda event: icon.configure(fg=GREEN))
+    icon.bind("<Leave>", lambda event: icon.configure(fg=INK))
+    return icon
 
 
 class _ModalDialog(tk.Frame):
@@ -23,8 +34,10 @@ class _ModalDialog(tk.Frame):
         self.parent = parent
         self.dialog_title = title
         self._size = (width, height)
+        self.previous_grab = None
 
     def _show_modal(self):
+        self.previous_grab = self.grab_current()
         self.update_idletasks()
         width, height = self._size
         self.place(relx=0.5, rely=0.5, anchor="center",
@@ -53,6 +66,7 @@ class _ModalDialog(tk.Frame):
                      font=("Segoe UI", 9)).pack(anchor="w", pady=(3, 0))
 
     def close(self):
+        previous_grab = self.previous_grab
         try:
             if self.grab_current() == self:
                 self.grab_release()
@@ -60,6 +74,48 @@ class _ModalDialog(tk.Frame):
             pass
         self.place_forget()
         tk.Frame.destroy(self)
+        if previous_grab:
+            try:
+                if previous_grab.winfo_exists():
+                    previous_grab.grab_set()
+            except tk.TclError:
+                pass
+
+
+class EffectInfoDialog(_ModalDialog):
+    def __init__(self, parent, effect):
+        _ModalDialog.__init__(self, parent, effect.name, 420, 230)
+        self._build_header(effect.name)
+        content = ttk.Frame(self, padding=20)
+        content.pack(fill="both", expand=True)
+        ttk.Label(content, text=effect.description, wraplength=370,
+                  justify="left").pack(anchor="w")
+        self._show_modal()
+
+
+class CountryChoiceDialog(_ModalDialog):
+    def __init__(self, parent, model, country_id, on_confirm):
+        self.on_confirm = on_confirm
+        self.country_id = country_id
+        country_name = model.country_name(country_id)
+        _ModalDialog.__init__(self, parent, "Choose country", 430, 250)
+        self._build_header(country_name, "Begin the campaign as this country?")
+        content = ttk.Frame(self, padding=(20, 12, 20, 10))
+        content.pack(fill="both", expand=True)
+        ttk.Label(content, text="Confirm this country for your campaign.",
+                  wraplength=370).pack(anchor="w")
+        actions = ttk.Frame(content)
+        actions.pack(side="bottom", fill="x", pady=(16, 0))
+        ttk.Button(actions, text="Cancel", command=self.close).pack(side="right")
+        ttk.Button(actions, text="Choose country", style="Accent.TButton",
+                   command=self._confirm).pack(side="right", padx=(0, 8))
+        self._show_modal()
+
+    def _confirm(self):
+        country_id = self.country_id
+        callback = self.on_confirm
+        self.close()
+        callback(country_id)
 
 class UnitInfoDialog(_ModalDialog):
     def __init__(self, parent, model, unit, debug_mode=False):
@@ -73,16 +129,11 @@ class UnitInfoDialog(_ModalDialog):
 
         content = ttk.Frame(self, padding=(18, 14, 18, 8))
         content.pack(fill="both", expand=True)
-        coordinate = "{}-{}".format(unit.position[0] + 1, unit.position[1] + 1)
-        action_state = ("Afloat" if unit.embarked else
-                        "Turn spent" if unit.attacked else
-                        "Move and attack ready" if unit.movement_left > 0 else
-                        "Attack ready")
         rows = (
             ("ATTACK", "{:g}".format(unit.effective_attack)),
             ("RANGE", "{} hex".format(unit.range)),
             ("STRENGTH", "{}/{} HP".format(unit.hp, unit.max_hp)),
-            ("MOVEMENT", "{}/{} MP".format(unit.movement_left, unit.movement)),
+            ("MOVEMENT", "{} MP".format(unit.movement)),
             ("ATTACKS", "{}/{}".format(unit.attacks_left, unit.attacks_per_turn)),
         )
         if debug_mode:
@@ -103,28 +154,10 @@ class UnitInfoDialog(_ModalDialog):
         effects = ttk.Frame(profile)
         effects.grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
         for skill in get_unit_skills(unit):
-            ttk.Button(effects, text=skill.icon, width=3,
-                       command=lambda effect=skill:
-                       _show_effect_info(self, effect)).pack(side="left", padx=(0, 4))
+            _effect_icon(effects, skill).pack(side="left", padx=(0, 4))
         for status in get_unit_statuses(unit):
-            ttk.Button(effects, text=status.icon, width=3,
-                       command=lambda effect=status:
-                       _show_effect_info(self, effect)).pack(side="left", padx=(0, 4))
+            _effect_icon(effects, status).pack(side="left", padx=(0, 4))
 
-        field_status = ttk.LabelFrame(content, text="FIELD STATUS", padding=(14, 12))
-        field_status.pack(side="right", fill="y", padx=(14, 0))
-        field_status.configure(width=220)
-        field_status.pack_propagate(False)
-        ttk.Label(field_status, text="UNIT STATUS", style="Muted.TLabel").pack(
-            anchor="w")
-        ttk.Label(field_status, text=action_state, wraplength=185,
-                  font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(4, 14))
-        if debug_mode:
-            ttk.Separator(field_status).pack(fill="x", pady=(0, 10))
-            ttk.Label(field_status, text="HEX POSITION", style="Muted.TLabel").pack(
-                anchor="w")
-            ttk.Label(field_status, text=coordinate,
-                      font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(3, 0))
         self._show_modal()
 
 
@@ -149,44 +182,69 @@ class RecruitDialog(_ModalDialog):
         content.pack(fill="both", expand=True)
         selection = ttk.Frame(content, padding=(4, 2))
         selection.pack(fill="both", expand=True)
-        headings = ttk.Frame(selection)
-        headings.pack(fill="x", pady=(0, 4))
-        headings.columnconfigure(0, weight=4)
+        selection.columnconfigure(0, weight=4)
         for column in range(1, 5):
-            headings.columnconfigure(column, weight=1)
+            selection.columnconfigure(column, weight=1, uniform="recruit-stats",
+                                     minsize=54)
+        self.kind_labels = {}
+        self.kind_rows = {}
         for column, label in enumerate(("UNIT / COST", "ATTACK", "RANGE", "HP", "MOVE")):
-            ttk.Label(headings, text=label, style="Muted.TLabel").grid(
+            ttk.Label(selection, text=label, style="Muted.TLabel").grid(
                 row=0, column=column, sticky="w" if column == 0 else "",
-                padx=(4, 0) if column == 0 else 0)
+                padx=(4, 0) if column == 0 else 0, pady=(0, 4))
 
         for index, (kind, details) in enumerate(UNIT_TYPES.items()):
-            row = ttk.Frame(selection, padding=(4, 3))
-            row.pack(fill="x")
-            row.columnconfigure(0, weight=4)
-            for column in range(1, 5):
-                row.columnconfigure(column, weight=1)
+            row = 1 + index * 2
             cost = details["cost"]
-            unit_choice = ttk.Frame(row)
+            row_panel = ttk.Frame(selection, padding=(4, 3))
+            row_panel.grid(row=row, column=0, columnspan=5, sticky="ew",
+                           pady=(1, 1))
+            row_panel.columnconfigure(0, weight=4)
+            for column in range(1, 5):
+                row_panel.columnconfigure(column, weight=1,
+                                          uniform="recruit-row-stats",
+                                          minsize=54)
+            row_panel.bind("<Button-1>",
+                           lambda event, selected_kind=kind:
+                           self._select_kind(selected_kind))
+            self.kind_rows[kind] = row_panel
+
+            unit_choice = ttk.Frame(row_panel)
             unit_choice.grid(row=0, column=0, sticky="w")
-            ttk.Radiobutton(unit_choice, text=kind, value=kind, variable=self.kind_var,
-                            command=self._refresh_preview).pack(side="left")
+            unit_choice.bind("<Button-1>",
+                             lambda event, selected_kind=kind:
+                             self._select_kind(selected_kind))
+            kind_label = ttk.Label(unit_choice, text=kind, cursor="hand2")
+            kind_label.pack(side="left")
+            kind_label.bind("<Button-1>",
+                            lambda event, selected_kind=kind:
+                            self._select_kind(selected_kind))
+            self.kind_labels[kind] = kind_label
             for skill in get_unit_skills(kind):
-                ttk.Button(unit_choice, text=skill.icon, width=2,
-                           command=lambda effect=skill:
-                           _show_effect_info(self, effect)).pack(
-                               side="left", padx=(5, 0))
+                _effect_icon(unit_choice, skill).pack(side="left", padx=(5, 0))
             cost_text = "Cost  Money {}  /  Steel {}  /  Tech {}".format(
                 cost["money"], cost["steel"], cost["technology"])
-            ttk.Label(row, text=cost_text, style="Muted.TLabel").grid(
-                row=1, column=0, sticky="w", padx=(24, 0), pady=(2, 0))
+            cost_label = ttk.Label(row_panel, text=cost_text, style="Muted.TLabel",
+                                   cursor="hand2")
+            cost_label.grid(row=1, column=0, sticky="ew", padx=(24, 0),
+                            pady=(1, 0))
+            cost_label.bind("<Button-1>",
+                            lambda event, selected_kind=kind:
+                            self._select_kind(selected_kind))
             values = (details["attack"], details["range"], details["hp"],
                       details["movement"])
             for column, value in enumerate(values, start=1):
-                ttk.Label(row, text=str(value),
-                          font=("Segoe UI", 11, "bold")).grid(
-                              row=0, column=column, rowspan=2, sticky="n")
+                value_label = ttk.Label(row_panel, text=str(value),
+                                        font=("Segoe UI", 11, "bold"),
+                                        cursor="hand2")
+                value_label.grid(row=0, column=column, rowspan=2,
+                                 sticky="nsew", pady=(3, 0))
+                value_label.bind("<Button-1>",
+                                 lambda event, selected_kind=kind:
+                                 self._select_kind(selected_kind))
             if index < len(UNIT_TYPES) - 1:
-                ttk.Separator(selection).pack(fill="x")
+                ttk.Separator(selection).grid(row=row + 1, column=0, columnspan=5,
+                                              sticky="ew", pady=(2, 0))
 
         ttk.Label(content, textvariable=self.status_var, wraplength=700,
                   style="Muted.TLabel").pack(anchor="w", pady=(0, 2))
@@ -202,6 +260,10 @@ class RecruitDialog(_ModalDialog):
 
     def _refresh_preview(self):
         kind = self.kind_var.get()
+        for unit_kind, label in self.kind_labels.items():
+            label.configure(foreground=GREEN if unit_kind == kind else INK,
+                            font=("Segoe UI", 9,
+                                  "bold" if unit_kind == kind else "normal"))
         details = UNIT_TYPES[kind]
         cost = details["cost"]
         if not self.campaign_started:
@@ -233,6 +295,10 @@ class RecruitDialog(_ModalDialog):
             text="Recruit {}".format(kind),
             state="normal" if can_recruit else "disabled")
 
+    def _select_kind(self, kind):
+        self.kind_var.set(kind)
+        self._refresh_preview()
+
     def _recruit(self):
         unit, message = self.model.recruit(self.city["position"], self.kind_var.get())
         if unit:
@@ -245,7 +311,7 @@ class RecruitDialog(_ModalDialog):
 class SettingsDialog(_ModalDialog):
     def __init__(self, parent, model, player_country_id, pending_country_id,
                  resource_country_id, campaign_started, current_map_name,
-                 history, debug_mode, attack_target, on_country_selected,
+                 history, debug_mode, attack_target,
                  on_resource_selected, on_choose_map, on_campaign_action,
                  on_change_country, on_attack, on_cancel_attack, on_debug_changed):
         _ModalDialog.__init__(self, parent, "Campaign settings", 520, 390)
@@ -254,7 +320,6 @@ class SettingsDialog(_ModalDialog):
         self.pending_country_id = pending_country_id
         self.resource_country_id = resource_country_id
         self.campaign_started = campaign_started
-        self.on_country_selected = on_country_selected
         self.on_resource_selected = on_resource_selected
         self.on_choose_map = on_choose_map
         self.on_campaign_action = on_campaign_action
@@ -262,7 +327,6 @@ class SettingsDialog(_ModalDialog):
         self.on_attack = on_attack
         self.on_cancel_attack = on_cancel_attack
         self.on_debug_changed = on_debug_changed
-        self.player_country_var = tk.StringVar()
         self.resource_country_var = tk.StringVar()
         self.debug_var = tk.BooleanVar(value=debug_mode)
         self.turn_var = tk.StringVar(value=str(model.turn))
@@ -300,21 +364,6 @@ class SettingsDialog(_ModalDialog):
 
         selectors = ttk.Frame(content)
         selectors.pack(fill="x")
-        self.player_country_label = ttk.Label(selectors, text="Play as country")
-        self.player_country_label.pack(anchor="w")
-        country_names = [country["name"] for country in model.countries.values()
-                         if country["faction"] != NEUTRAL]
-        self.player_country_choice = ttk.Combobox(
-            selectors, textvariable=self.player_country_var,
-            values=country_names, state="disabled" if campaign_started else "readonly")
-        self.player_country_choice.pack(fill="x", pady=(2, 8))
-        self.player_country_choice.bind("<<ComboboxSelected>>", self._select_player_country)
-        self.player_country_var.set(model.country_name(
-            player_country_id if campaign_started else pending_country_id))
-        if campaign_started:
-            self.player_country_label.pack_forget()
-            self.player_country_choice.pack_forget()
-
         self.resource_label = ttk.Label(selectors, text="Resource account")
         self.resource_label.pack(anchor="w")
         self.resource_country_choice = ttk.Combobox(
@@ -332,10 +381,9 @@ class SettingsDialog(_ModalDialog):
         self.actions.pack(fill="x")
         ttk.Button(self.actions, text="Choose map", command=self._choose_map).pack(
             fill="x", pady=(0, 4))
-        campaign_action = "Restart campaign" if campaign_started else "Start campaign"
-        ttk.Button(self.actions, text=campaign_action, command=self._campaign_action).pack(
-            fill="x", pady=(0, 4))
         if campaign_started:
+            ttk.Button(self.actions, text="Restart campaign",
+                       command=self._campaign_action).pack(fill="x", pady=(0, 4))
             ttk.Button(self.actions, text="Change country", command=self._change_country).pack(
                 fill="x", pady=(0, 4))
         if attack_target is not None:
@@ -369,16 +417,6 @@ class SettingsDialog(_ModalDialog):
         if self.resource_country_id not in self.resource_country_ids:
             self.resource_country_id = country_id
         self.resource_country_var.set(self.model.country_name(self.resource_country_id))
-
-    def _select_player_country(self, event=None):
-        selected_name = self.player_country_var.get()
-        country_id = next((country["id"] for country in self.model.countries.values()
-                           if country["name"] == selected_name), None)
-        if country_id is None:
-            return
-        self.pending_country_id = country_id
-        self._update_resource_accounts()
-        self.on_country_selected(country_id)
 
     def _select_resource_country(self, event=None):
         selected_name = self.resource_country_var.get()

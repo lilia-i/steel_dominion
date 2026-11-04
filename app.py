@@ -4,7 +4,12 @@ from tkinter import messagebox, ttk
 
 from game_config import ENEMY, NEUTRAL, PLAYER
 from game_model import GameModel
-from game_dialogs import RecruitDialog, SettingsDialog, UnitInfoDialog
+from game_dialogs import (
+    CountryChoiceDialog,
+    RecruitDialog,
+    SettingsDialog,
+    UnitInfoDialog,
+)
 from hex_map import HexMapView
 from map_data import load_map_file
 
@@ -19,7 +24,7 @@ class GameApp(object):
     def __init__(self, root):
         self.root = root
         self.root.title("Steel Dominion | Hex Campaign")
-        self.root.geometry("1280x820")
+        self.root.geometry("640x420")
         self.root.minsize(640, 420)
         self.root.configure(bg=PAPER)
 
@@ -32,6 +37,7 @@ class GameApp(object):
         self.player_country_id = self.model.player_country_id
         self.pending_player_country_id = self.player_country_id
         self.campaign_started = False
+        self.setup_country_confirmed = False
         self.debug_mode = False
         self.model.phase = "setup"
         self.resource_country_id = self.player_country_id
@@ -64,6 +70,8 @@ class GameApp(object):
 
         self.stat_vars = {key: tk.StringVar(value="-")
                           for key in ("money", "steel", "technology")}
+        self.income_vars = {key: tk.StringVar(value="+0/turn")
+                    for key in ("money", "steel", "technology")}
         self.map_view = HexMapView(
             self.root, self.model, self._on_hex_click,
             bg="#dfe7df", highlightthickness=0, cursor="fleur")
@@ -84,6 +92,9 @@ class GameApp(object):
                  font=("Consolas", 8, "bold")).pack(side="left", padx=(0, 5))
             tk.Label(cell, textvariable=self.stat_vars[key], bg="#d9ddd5", fg=INK,
                  font=("Consolas", 11, "bold")).pack(side="left")
+            tk.Label(cell, textvariable=self.income_vars[key], bg="#d9ddd5",
+                     fg=GREEN, font=("Consolas", 8, "bold")).pack(
+                         side="left", padx=(5, 0))
         self.settings_button = ttk.Button(
             resource_strip, text="Settings", command=self._show_settings)
         self.settings_button.pack(side="right", padx=8, pady=3)
@@ -126,8 +137,7 @@ class GameApp(object):
             self.root, self.model, self.player_country_id,
             self.pending_player_country_id, self.resource_country_id,
             self.campaign_started, self.current_map_name, self.history,
-            self.debug_mode,
-            self.attack_target, self._on_settings_country_selected,
+            self.debug_mode, self.attack_target,
             self._on_settings_resource_selected, self._open_map_selector,
             self._settings_campaign_action, self._restart, self._attack,
             self._cancel_attack, self._on_debug_changed)
@@ -137,13 +147,26 @@ class GameApp(object):
         self._refresh()
 
     def _on_hex_click(self, position):
-        if not self.campaign_started or self.model.phase != PLAYER:
+        if not self.campaign_started:
+            if not self.setup_country_confirmed:
+                city = self.model.city_for_hex(position)
+                if city and self.model.faction_for(city["owner"]) != NEUTRAL:
+                    CountryChoiceDialog(
+                        self.root, self.model, city["owner"],
+                        self._on_setup_country_confirmed)
+                return
+            self.selected_hex = position
+            self.selected_unit = None
+            self.attack_target = None
+            self.message = "Hex selected."
+            self._refresh()
+            return
+        if self.model.phase != PLAYER:
             return
         unit = self.model.unit_at(position)
         if unit and unit.owner == self.player_country_id:
             self.selected_hex = position
             self.selected_unit = unit
-            self.resource_country_id = unit.owner
             self.attack_target = None
             if unit.attacked:
                 action_hint = "Attack used; this unit is spent for the turn."
@@ -175,8 +198,7 @@ class GameApp(object):
             if hostile_target and distance <= self.selected_unit.range:
                 self.attack_target = position
                 self.selected_hex = self.selected_unit.position
-                self.message = "Target marked. Use Attack target to engage."
-                self._refresh()
+                self._attack()
                 return
             if position in self.model.movement_paths(self.selected_unit):
                 moved, events = self.model.move(self.selected_unit, position)
@@ -195,8 +217,6 @@ class GameApp(object):
         self.selected_unit = None
         self.attack_target = None
         city = self.model.cities.get(position)
-        if city and self.model.faction_for(city["owner"]) == self.model.player_faction:
-            self.resource_country_id = city["owner"]
         self.message = "{}: select a unit or recruit here.".format(city["name"]) if city else "Select one of your units."
         self._refresh()
 
@@ -230,14 +250,14 @@ class GameApp(object):
             self.resource_country_id = country_id
         self._refresh()
 
-    def _on_settings_country_selected(self, country_id):
-        if self.campaign_started or country_id not in self.model.countries or \
-                self.model.faction_for(country_id) == NEUTRAL:
+    def _on_setup_country_confirmed(self, country_id):
+        if (self.campaign_started or country_id not in self.model.countries or
+                self.model.faction_for(country_id) == NEUTRAL):
             return
         self.pending_player_country_id = country_id
-        self.message = "{} selected. Start the campaign to confirm.".format(
-            self.model.country_name(country_id))
-        self._refresh()
+        self.player_country_id = country_id
+        self._reset_campaign("Campaign started as {}.".format(
+            self.model.country_name(country_id)))
 
     def _attack(self):
         if not self.selected_unit or self.attack_target is None:
@@ -305,6 +325,7 @@ class GameApp(object):
     def _restart(self):
         if self.campaign_started:
             self.campaign_started = False
+            self.setup_country_confirmed = False
             self.pending_player_country_id = self.player_country_id
             self.model.phase = "setup"
             self.selected_unit = None
@@ -321,6 +342,7 @@ class GameApp(object):
         self.player_country_id = self.model.player_country_id
         self.pending_player_country_id = self.player_country_id
         self.campaign_started = True
+        self.setup_country_confirmed = True
         self.resource_country_id = self.player_country_id
         self.selected_unit = next(
             (unit for unit in self.model.units if unit.owner == self.player_country_id), None)
@@ -482,6 +504,7 @@ class GameApp(object):
         self.player_country_id = model.player_country_id
         self.pending_player_country_id = self.player_country_id
         self.campaign_started = False
+        self.setup_country_confirmed = False
         self.model.phase = "setup"
         self.resource_country_id = self.player_country_id
         self.selected_unit = None
@@ -507,8 +530,10 @@ class GameApp(object):
                 self.model.faction_for(account_country_id)):
             self.resource_country_id = account_country_id
         resources = self.model.countries[self.resource_country_id]["resources"]
+        income = self.model.income_for(self.resource_country_id)
         for resource in ("money", "steel", "technology"):
             self.stat_vars[resource].set(str(resources[resource]))
+            self.income_vars[resource].set("+{}/turn".format(income[resource]))
 
         city = self.model.cities.get(self.selected_hex)
         unit = self.model.unit_at(self.selected_hex)
@@ -533,7 +558,8 @@ class GameApp(object):
             self.city_recruit_button.place(
                 relx=0.5, rely=1.0, x=city_offset, y=-3, anchor="s")
         self.map_view.set_selection(
-            self.selected_hex if self.campaign_started else None,
+            self.selected_hex if (self.campaign_started or
+                                  self.setup_country_confirmed) else None,
             selected_unit if self.campaign_started else None,
             self.attack_target if self.campaign_started else None)
         self.status_var.set(self.message)

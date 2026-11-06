@@ -4,35 +4,35 @@ NEUTRAL = "neutral"
 
 UNIT_TYPES = {
     "Infantry": {
-        "cost": {"money": 80, "steel": 5, "technology": 0},  # 招募所需的金钱、钢材、科技
-        "attack": 15,  # 基础攻击力
-        "range": 1,  # 攻击距离（六角格）
-        "hp": 80,  # 初始及最大生命值
-        "movement": 6,  # 每回合最大行动力
+        "cost": {"money": 80, "steel": 5, "technology": 0},
+        "attack": 15, 
+        "range": 1, 
+        "hp": 80, 
+        "movement": 6, 
         "mark": "I",
     },
     "Tank": {
-        "cost": {"money": 160, "steel": 35, "technology": 5},  # 招募所需的金钱、钢材、科技
-        "attack": 20,  # 基础攻击力
-        "range": 1,  # 攻击距离（六角格）
-        "hp": 150,  # 初始及最大生命值
-        "movement": 5,  # 每回合最大行动力
+        "cost": {"money": 160, "steel": 35, "technology": 5},
+        "attack": 20, 
+        "range": 1, 
+        "hp": 150, 
+        "movement": 5, 
         "mark": "T",
     },
     "Artillery": {
-        "cost": {"money": 120, "steel": 15, "technology": 10},  # 招募所需的金钱、钢材、科技
-        "attack": 22,  # 基础攻击力
-        "range": 2,  # 攻击距离（六角格）
-        "hp": 90,  # 初始及最大生命值
-        "movement": 4,  # 每回合最大行动力
+        "cost": {"money": 120, "steel": 15, "technology": 10},
+        "attack": 22, 
+        "range": 2, 
+        "hp": 90, 
+        "movement": 4, 
         "mark": "A",
     },
 }
 
 TRANSPORT_STATS = {
-    "attack": 1,  # 登船运输状态下的攻击力
-    "range": 1,  # 登船运输状态下的攻击距离（六角格）
-    "movement": 4,  # 登船运输状态下的每回合最大行动力
+    "attack": 10, 
+    "range": 1,   
+    "movement": 4,   
     "mark": "S",
 }
 
@@ -44,27 +44,27 @@ TERRAIN_COLORS = {
 }
 
 TERRAIN_MOVEMENT_COST = {
-    "Plain": 1,  # 进入平原消耗的行动力
-    "Forest": 3,  # 进入森林消耗的行动力（步兵另有地形技能）
-    "Hill": 3,  # 进入丘陵消耗的行动力（步兵另有地形技能）
-    "Water": 1,  # 水域内移动每格消耗的行动力
+    "Plain": 1,   
+    "Forest": 3,   
+    "Hill": 3,   
+    "Water": 1, 
 }
 
 DEFENSIVE_TERRAINS = ("Hill", "Forest")
-TERRAIN_DEFENSE_BONUS = 0  # 防守方位于防御地形时减少的伤害
-MIN_DAMAGE = 1  # 单次攻击造成的最低伤害
-DAMAGE_RANDOM_BONUS = (-0.15, 0.15)  # 主动攻击和反击的随机伤害浮动比例（-15% 至 +15%）
+TERRAIN_DEFENSE_BONUS = 0  
+MIN_DAMAGE = 1 
+DAMAGE_RANDOM_BONUS = (-0.15, 0.15)  
 
 CITY_PRODUCTION_PER_LEVEL = {
-    "money": 15,  # 每级城市等级提供的每回合金钱
-    "steel": 3,  # 每级工业等级提供的每回合钢材
-    "technology": 1,  # 每级科技等级提供的每回合科技
+    "money": 15,  
+    "steel": 3,   
+    "technology": 1,  
 }
-CITY_BASE_HP = 100  # 1 级城市的基础生命值
-CITY_HP_PER_LEVEL = 40  # 城市等级每提高一级增加的生命值
-CITY_MAX_HP = 300  # 城市生命值上限
-CITY_MAX_LEVEL = 6  # 城市、工业、科技等级的最高等级
-CITY_HEAL_PER_TURN = 12  # 城内驻军每回合恢复的生命值
+CITY_BASE_HP = 150   
+CITY_HP_PER_LEVEL = 30   
+CITY_MAX_HP = 300  
+CITY_MAX_LEVEL = 6   
+CITY_HEAL_PER_TURN = 12  
 
 
 def city_hp_for_level(level):

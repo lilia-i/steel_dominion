@@ -279,14 +279,9 @@ class RecruitDialog(_ModalDialog):
                 reason = "Insufficient resources: {}.".format(
                     ", ".join(missing).title())
             else:
-                deployment_available = self.model.unit_at(self.city["position"]) is None
-                if not deployment_available:
-                    deployment_available = any(
-                        self.model.tiles[position] != "Water" and
-                        self.model.unit_at(position) is None
-                        for position in self.model.neighbors(self.city["position"]))
-                reason = ("No open hex is available near this city."
-                          if not deployment_available else
+                city_available = self.model.unit_at(self.city["position"]) is None
+                reason = ("The city must be empty to recruit a unit."
+                          if not city_available else
                           "Ready to deploy at {}.".format(self.city["name"]))
 
         can_recruit = reason.startswith("Ready to deploy")

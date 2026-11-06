@@ -1,4 +1,7 @@
+import copy
 import os
+import queue
+import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -46,6 +49,10 @@ class GameApp(object):
         self.attack_target = None
         self.result_shown = False
         self.history = []
+        self.move_undo = None
+        self.attacked_unit_ids = set()
+        self.ai_running = False
+        self.ai_result_queue = queue.Queue()
         self.message = "Choose your country, then start the campaign."
         self._build_ui()
         self._log("Choose a country to begin the campaign.")
@@ -120,6 +127,9 @@ class GameApp(object):
         self.city_recruit_button = ttk.Button(
             self.map_view, text="+", width=2, style="MapAction.TButton",
             command=self._show_recruit_dialog)
+        self.undo_move_button = ttk.Button(
+            self.map_view, text="Undo move", style="MapAction.TButton",
+            command=self._undo_move)
         self.end_turn_button = ttk.Button(
             self.map_view, text="End turn  >", style="Accent.TButton",
             command=self._end_turn)
@@ -201,9 +211,13 @@ class GameApp(object):
                 self._attack()
                 return
             if position in self.model.movement_paths(self.selected_unit):
+                move_snapshot = (copy.deepcopy(self.model)
+                                 if self.selected_unit.id not in self.attacked_unit_ids
+                                 else None)
                 moved, events = self.model.move(self.selected_unit, position)
                 self._show_events(events)
                 if moved:
+                    self.move_undo = (move_snapshot, self.selected_unit.id)
                     self.selected_hex = position
                     self.message = events[-1]
                     self._announce_result()
@@ -234,6 +248,7 @@ class GameApp(object):
                       self.campaign_started, self._on_recruited)
 
     def _on_recruited(self, unit, message):
+        self.move_undo = None
         self.message = message
         self.selected_unit = unit
         self.selected_hex = unit.position
@@ -265,6 +280,8 @@ class GameApp(object):
         attacked, events = self.model.attack(self.selected_unit, self.attack_target)
         self._show_events(events)
         if attacked:
+            self.attacked_unit_ids.add(self.selected_unit.id)
+            self.move_undo = None
             self.message = events[0]
             self.attack_target = None
             self._announce_result()
@@ -277,6 +294,29 @@ class GameApp(object):
         self.message = "Target cleared."
         self._refresh()
 
+    def _undo_move(self):
+        if (not self.move_undo or not self.campaign_started or
+                self.model.phase != PLAYER or not self.selected_unit):
+            return
+        previous_model, unit_id = self.move_undo
+        if (previous_model is None or self.selected_unit.id != unit_id or
+                unit_id in self.attacked_unit_ids):
+            return
+        self.model = previous_model
+        self.map_view.model = self.model
+        self.selected_unit = next(
+            (unit for unit in self.model.units if unit.id == unit_id), None)
+        if not self.selected_unit:
+            self.move_undo = None
+            self._refresh()
+            return
+        self.selected_hex = self.selected_unit.position
+        self.attack_target = None
+        self.move_undo = None
+        self.message = "Last movement withdrawn."
+        self._log(self.message)
+        self._refresh()
+
     def _settings_campaign_action(self):
         if self.campaign_started:
             self._reset_campaign("Campaign restarted as {}.".format(
@@ -287,13 +327,43 @@ class GameApp(object):
     def _end_turn(self):
         if not self.campaign_started or self.model.phase != PLAYER:
             return
+        self.move_undo = None
         self.model.phase = ENEMY
+        self.ai_running = True
         self.message = "AI forces are taking their turn..."
         self._refresh()
         self.root.after(450, self._run_enemy_turn)
 
     def _run_enemy_turn(self):
-        events, winner = self.model.enemy_turn()
+        model = copy.deepcopy(self.model)
+
+        def calculate_turn():
+            try:
+                events, winner = model.enemy_turn()
+            except Exception as error:
+                self.ai_result_queue.put((None, None, None, error))
+            else:
+                self.ai_result_queue.put((model, events, winner, None))
+
+        threading.Thread(target=calculate_turn, daemon=True).start()
+        self.root.after(40, self._poll_enemy_turn)
+
+    def _poll_enemy_turn(self):
+        try:
+            model, events, winner, error = self.ai_result_queue.get_nowait()
+        except queue.Empty:
+            self.root.after(40, self._poll_enemy_turn)
+            return
+        self.ai_running = False
+        if error:
+            self.model.phase = PLAYER
+            self.message = "AI turn failed: {}".format(error)
+            self._refresh()
+            return
+
+        self.model = model
+        self.map_view.model = self.model
+        self.attacked_unit_ids.clear()
         self._show_events(events)
         self.selected_unit = next(
             (unit for unit in self.model.units if unit.owner == self.player_country_id), None)
@@ -326,6 +396,8 @@ class GameApp(object):
         if self.campaign_started:
             self.campaign_started = False
             self.setup_country_confirmed = False
+            self.move_undo = None
+            self.attacked_unit_ids.clear()
             self.pending_player_country_id = self.player_country_id
             self.model.phase = "setup"
             self.selected_unit = None
@@ -351,6 +423,8 @@ class GameApp(object):
                                   if city["owner"] == self.player_country_id))
         self.attack_target = None
         self.result_shown = False
+        self.move_undo = None
+        self.attacked_unit_ids.clear()
         self.message = message
         self.history = []
         self._log("Campaign started as {}.".format(
@@ -505,6 +579,8 @@ class GameApp(object):
         self.pending_player_country_id = self.player_country_id
         self.campaign_started = False
         self.setup_country_confirmed = False
+        self.move_undo = None
+        self.attacked_unit_ids.clear()
         self.model.phase = "setup"
         self.resource_country_id = self.player_country_id
         self.selected_unit = None
@@ -543,9 +619,12 @@ class GameApp(object):
         self.end_turn_button.configure(
             state="normal" if self.campaign_started and self.model.phase == PLAYER
             else "disabled")
+        self.settings_button.configure(
+            state="disabled" if self.ai_running else "normal")
         self.end_turn_button.place(relx=1.0, rely=1.0, x=-12, y=-12, anchor="se")
         self.unit_info_button.place_forget()
         self.city_recruit_button.place_forget()
+        self.undo_move_button.place_forget()
         can_recruit = (self.campaign_started and self.model.phase == PLAYER and city and
                        city["owner"] == self.player_country_id)
         if unit or can_recruit:
@@ -557,6 +636,15 @@ class GameApp(object):
         if can_recruit:
             self.city_recruit_button.place(
                 relx=0.5, rely=1.0, x=city_offset, y=-3, anchor="s")
+        can_undo_move = (
+            self.campaign_started and self.model.phase == PLAYER and
+            selected_unit is not None and
+            self.move_undo is not None and
+            self.move_undo[0] is not None and
+            selected_unit.id == self.move_undo[1] and
+            self.move_undo[1] not in self.attacked_unit_ids)
+        if can_undo_move:
+            self.undo_move_button.place(relx=0.5, rely=1.0, y=-34, anchor="s")
         self.map_view.set_selection(
             self.selected_hex if (self.campaign_started or
                                   self.setup_country_confirmed) else None,

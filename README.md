@@ -27,7 +27,7 @@ In the editor, drag the divider to resize the tools sidebar and map; the sidebar
 
 Embarking and landing both require a unit to start its move with full movement points.
 
-Click a non-neutral country's territory and confirm the in-app prompt to start the campaign as that country. Settings no longer contains a Start campaign control; use it to browse maps or restart a running campaign. During your turn, clicking an enemy unit or living enemy city in range attacks it immediately; the Settings target command remains available as an alternate route. Movement highlights exclude occupied hexes and living enemy cities, which also block pathing. Entering water requires a unit to start the move with all movement points available, and water transitions use the full movement allowance. Newly recruited units cannot move during their recruitment turn. The AI recruits affordable units and uses its forces to pursue enemy cities and targets. Four yellow direction markers indicate a unit that has not acted, thick solid outlines show reachable hexes, and dark red reticles mark attackable enemies. Status icons appear beside units on the map; skill and status icons open an in-app description panel.
+Click a non-neutral country's territory and confirm the in-app prompt to start the campaign as that country. Settings no longer contains a Start campaign control; use it to browse maps or restart a running campaign. During your turn, clicking an enemy unit or living enemy city in range attacks it immediately; the Settings target command remains available as an alternate route. Movement highlights exclude occupied hexes and living enemy cities, which also block pathing. Entering water requires a unit to start the move with all movement points available, and water transitions use the full movement allowance. Newly recruited units cannot move or attack until the next turn. Units can only be recruited on unoccupied city hexes. AI recruitment continues until resources or unoccupied owned cities run out, favoring cities near enemy pressure. AI scores enemy units and cities together by value, damage, distance, and nearby support; it moves toward a better position before attacking the best currently attackable target. Capturing a city does not restore its HP. AI turns run without blocking map interaction. Four yellow direction markers indicate a unit that has not acted, thick solid outlines show reachable hexes, and dark red reticles mark attackable enemies. Status icons appear beside units on the map; skill and status icons open an in-app description panel.
 
 ## Modules
 
@@ -67,3 +67,12 @@ Click a non-neutral country's territory and confirm the in-app prompt to start t
 - Limited movement-range outlines to the outer ring of reachable hexes.
 - Combined morale effects by level: high morale offsets flanking, while surrounding reduces boosted morale to one level below normal; effects update when statuses expire or formations break.
 - Displayed each resource account's per-turn income beside its current stock in the top bar.
+
+### v0.4
+- Ran AI turns asynchronously so the interface remains responsive while the AI acts.
+- Added a one-step movement undo that is available before the moved unit attacks; attacks, recruitment, and ending the turn commit the movement.
+- Let tanks retain movement after a kill when they had not moved before attacking.
+- Restricted player and AI recruitment to unoccupied owned city hexes; AI recruits repeatedly until resources or city slots run out, prioritizing besieged and frontline cities.
+- Made AI evaluate useful movement before attacking, then attack the best currently reachable target.
+- Kept captured city HP unchanged instead of restoring it.
+- Prevented newly recruited units from moving or attacking until their next turn.

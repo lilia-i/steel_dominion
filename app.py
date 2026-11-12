@@ -128,7 +128,7 @@ class GameApp(object):
             self.map_view, text="+", width=2, style="MapAction.TButton",
             command=self._show_recruit_dialog)
         self.undo_move_button = ttk.Button(
-            self.map_view, text="Undo move", style="MapAction.TButton",
+            self.map_view, text="\u21b6", width=2, style="MapIcon.TButton",
             command=self._undo_move)
         self.end_turn_button = ttk.Button(
             self.map_view, text="End turn  >", style="Accent.TButton",
@@ -164,7 +164,7 @@ class GameApp(object):
                     CountryChoiceDialog(
                         self.root, self.model, city["owner"],
                         self._on_setup_country_confirmed)
-                return
+                    return
             self.selected_hex = position
             self.selected_unit = None
             self.attack_target = None
@@ -627,15 +627,6 @@ class GameApp(object):
         self.undo_move_button.place_forget()
         can_recruit = (self.campaign_started and self.model.phase == PLAYER and city and
                        city["owner"] == self.player_country_id)
-        if unit or can_recruit:
-            unit_offset = -16 if can_recruit else 0
-            city_offset = 16 if unit else 0
-        if unit:
-            self.unit_info_button.place(
-                relx=0.5, rely=1.0, x=unit_offset, y=-3, anchor="s")
-        if can_recruit:
-            self.city_recruit_button.place(
-                relx=0.5, rely=1.0, x=city_offset, y=-3, anchor="s")
         can_undo_move = (
             self.campaign_started and self.model.phase == PLAYER and
             selected_unit is not None and
@@ -643,11 +634,19 @@ class GameApp(object):
             self.move_undo[0] is not None and
             selected_unit.id == self.move_undo[1] and
             self.move_undo[1] not in self.attacked_unit_ids)
+        action_buttons = []
+        if unit:
+            action_buttons.append(self.unit_info_button)
+        if can_recruit:
+            action_buttons.append(self.city_recruit_button)
         if can_undo_move:
-            self.undo_move_button.place(relx=0.5, rely=1.0, y=-34, anchor="s")
+            action_buttons.append(self.undo_move_button)
+        first_offset = -16 * (len(action_buttons) - 1)
+        for index, button in enumerate(action_buttons):
+            button.place(relx=0.5, rely=1.0,
+                         x=first_offset + index * 32, y=-3, anchor="s")
         self.map_view.set_selection(
-            self.selected_hex if (self.campaign_started or
-                                  self.setup_country_confirmed) else None,
+            self.selected_hex,
             selected_unit if self.campaign_started else None,
             self.attack_target if self.campaign_started else None)
         self.status_var.set(self.message)

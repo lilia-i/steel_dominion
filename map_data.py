@@ -230,12 +230,7 @@ def normalize_map_data(data):
         city_level = city.get("city_level", 1)
         if type(city_level) is not int or not 1 <= city_level <= 99:
             raise ValueError("City level must be from 1 to 99.")
-        expected_max_health = city_hp_for_level(city_level)
-        max_health = city.get("max_health", expected_max_health)
-        health = city.get("health", max_health)
-        if (type(max_health) is not int or max_health != expected_max_health or
-                type(health) is not int or not 0 <= health <= max_health):
-            raise ValueError("City HP maximum must match its level and configured maximum.")
+        city_health = city_hp_for_level(city_level)
         levels = {}
         for level_key in ("city_level", "industry_level", "research_level"):
             level = city_level if level_key == "city_level" else city.get(level_key, 1)
@@ -249,8 +244,8 @@ def normalize_map_data(data):
             "row": row,
             "name": name.strip(),
             "owner": owner,
-            "health": health,
-            "max_health": max_health,
+            "health": city_health,
+            "max_health": city_health,
         }
         normalized_city.update(levels)
         normalized_cities.append(normalized_city)

@@ -8,7 +8,7 @@ UNIT_TYPES = {
         "attack": 20, 
         "range": 1, 
         "hp": 80, 
-        "movement": 6, 
+        "movement": 18, 
         "mark": "I",
     },
     "Tank": {
@@ -16,7 +16,7 @@ UNIT_TYPES = {
         "attack": 27, 
         "range": 1, 
         "hp": 150, 
-        "movement": 5, 
+        "movement": 15, 
         "mark": "T",
     },
     "Artillery": {
@@ -24,7 +24,7 @@ UNIT_TYPES = {
         "attack": 29, 
         "range": 2, 
         "hp": 90, 
-        "movement": 4, 
+        "movement": 12, 
         "mark": "A",
     },
 }
@@ -32,7 +32,7 @@ UNIT_TYPES = {
 TRANSPORT_STATS = {
     "attack": 10, 
     "range": 1,   
-    "movement": 4,   
+    "movement": 12,   
     "mark": "S",
 }
 
@@ -40,14 +40,16 @@ TERRAIN_COLORS = {
     "Plain": "#d9dfc9",
     "Forest": "#a9bda0",
     "Hill": "#c8bd91",
+    "Desert": "#d7bd82",
     "Water": "#b6d0d0",
 }
 
 TERRAIN_MOVEMENT_COST = {
-    "Plain": 1,   
-    "Forest": 3,   
-    "Hill": 3,   
-    "Water": 1, 
+    "Plain": 3,   
+    "Forest": 6,   
+    "Hill": 7,   
+    "Desert": 5,
+    "Water": 3, 
 }
 
 DEFENSIVE_TERRAINS = ("Hill", "Forest")
@@ -56,14 +58,14 @@ MIN_DAMAGE = 1
 DAMAGE_RANDOM_BONUS = (-0.15, 0.15)  
 
 CITY_PRODUCTION_PER_LEVEL = {
-    "money": 10,  
-    "steel": 3,   
-    "technology": 1,  
+    "money": 20,  
+    "steel": 8,
+    "technology": 3,  
 }
-CITY_BASE_HP = 150   
-CITY_HP_PER_LEVEL = 30   
-CITY_MAX_HP = 300  
-CITY_MAX_LEVEL = 6   
+CITY_BASE_HP = 120
+CITY_HP_PER_LEVEL = 24
+CITY_MAX_LEVEL = 6
+CITY_MAX_HP = CITY_BASE_HP + (CITY_MAX_LEVEL - 1) * CITY_HP_PER_LEVEL
 CITY_HEAL_PER_TURN = 12  
 
 

@@ -32,7 +32,7 @@ Click a non-neutral country's territory and confirm the in-app prompt to start t
 ## Modules
 
 - `game_config.py`: unit balance, terrain costs, city HP/recovery, and combat constants
-- `maps/default_map.json` and `maps/eu.json`: playable campaign maps
+- `maps/default_map.json`, `maps/eu.json`, and `maps/EU2.json`: playable campaign maps
 - `map_data.py`: version 7 JSON map format, faction/color/river validation, and file operations
 - `map_editor.py`: standalone hex-map editor
 - `game_model.py`: terrain, cities, units, combat, and turn rules
@@ -42,6 +42,7 @@ Click a non-neutral country's territory and confirm the in-app prompt to start t
 - `steel_dominion.py`: application entry point
 
 ## Update Log
+- Record updates under the latest version; do not use dates unless explicitly requested.
 
 ### v0.2
 - Added a map resource strip and a selection info overlay; moved unit details and recruitment into modal in-window panels.
@@ -76,3 +77,16 @@ Click a non-neutral country's territory and confirm the in-app prompt to start t
 - Made AI evaluate useful movement before attacking, then attack the best currently reachable target.
 - Kept captured city HP unchanged instead of restoring it.
 - Prevented newly recruited units from moving or attacking until their next turn.
+- Reduced city HP to two-thirds of its previous configured values; map loading now recalculates current and maximum city HP from the configured formula, ignoring saved HP values.
+- Adjusted EU city levels for an overall Allied-to-Axis income ratio of about 1.15:1; set starting Tank/Artillery/Infantry counts to 11/8/21 for the Allies and 18/10/18 for the Axis, distributed across national territories rather than concentrated on the Maginot front.
+- Added Desert terrain with its own map color and dune symbol, plus a movement cost of 2.
+- Rebalanced EU starting forces among active countries and redistributed initial resources from the United Kingdom to the Soviet Union and from Italy to Germany, preserving faction totals.
+- Added `maps/EU2.json` with 23 historically named cities in oversized regions; each new city owns only its city hex until its surrounding territory is assigned. Income remains near a 1.15:1 player-to-enemy ratio, with randomized nearby valid city placement.
+- Removed white outlines between hexes and drew selected-hex, movement-range, and territory-boundary edges as circular arcs.
+- Filled each hex with an overlapping circle so neighboring colors join into smooth regions; kept territory, selection, and movement arcs independent from fill transitions.
+- Used exact circular arcs for territory, selection, and movement edges, independently from fill colors.
+- Rebalanced EU forces by the eastern, western, and UK-Italy theaters while preserving total units, resource stocks, and income.
+- Added slight AI randomness when choosing among equally or nearly equally scored recruitment, target, and movement options.
+- Reduced country color saturation and switched map zoom/pan to coalesced Canvas camera transforms without rebuilding the map on each input event.
+- Kept territory painting, city ownership colors, unit states, and selection overlays on localized update paths; overview/detail changes switch prebuilt layers after zoom input settles.
+- Filled triangular gaps at three-cell corners with three equal-area pieces: majority fill when colors repeat, or one piece per tile fill when all three differ; city, national, selection, and movement boundaries use the same inner-circle arc geometry.

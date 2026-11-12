@@ -569,7 +569,10 @@ class GameModel(object):
 
                 if not deployments:
                     break
-                _, deployment, city_name = min(deployments)
+                best_score = min(item[0][:3] for item in deployments)
+                best_deployments = [item for item in deployments
+                                    if item[0][:3] == best_score]
+                _, deployment, city_name = random.choice(best_deployments)
                 for resource, amount in UNIT_TYPES[kind]["cost"].items():
                     resources[resource] -= amount
                 unit = Unit(kind, owner_id, deployment, faction)
@@ -614,6 +617,13 @@ class GameModel(object):
                            self.distance(unit.position, position) <= 1)
         return target_score + nearby_units * 0.4, -len(paths[position]), position
 
+    @staticmethod
+    def _choose_ai_candidate(scored_candidates, tolerance=0.25):
+        best_score = min(score for score, _ in scored_candidates)
+        candidates = [candidate for score, candidate in scored_candidates
+                      if score <= best_score + tolerance]
+        return random.choice(candidates)
+
     def enemy_turn(self):
         if self.phase not in (PLAYER, ENEMY):
             return ["It is not the player turn."], self.winner
@@ -630,18 +640,32 @@ class GameModel(object):
                 targets = self._enemy_targets(enemy, target_faction)
                 if not targets:
                     break
-                target_position = min(
-                    targets, key=lambda position: self._enemy_target_score(
-                        enemy, position))
+                target_position = self._choose_ai_candidate([
+                    (self._enemy_target_score(enemy, position), position)
+                    for position in targets])
                 paths = self.movement_paths(enemy)
                 if paths:
-                    destination = min(paths, key=lambda position:
-                                      self._enemy_destination_score(
-                                          enemy, position, paths, targets))
+                    destination_scores = {
+                        position: self._enemy_destination_score(
+                            enemy, position, paths, targets)
+                        for position in paths
+                    }
+                    best_score = min(score[0]
+                                     for score in destination_scores.values())
+                    near_best = [
+                        position for position, score in destination_scores.items()
+                        if score[0] <= best_score + 0.15
+                    ]
+                    best_path_score = min(destination_scores[position][1]
+                                          for position in near_best)
+                    best_paths = [
+                        position for position in near_best
+                        if destination_scores[position][1] == best_path_score
+                    ]
+                    destination = random.choice(best_paths)
                     current_score = self._enemy_target_score(
                         enemy, target_position)
-                    next_score = self._enemy_destination_score(
-                        enemy, destination, paths, targets)
+                    next_score = destination_scores[destination]
                     if next_score[0] < current_score:
                         moved, movement_events = self.move(enemy, destination)
                         if moved:
@@ -654,9 +678,9 @@ class GameModel(object):
                     self._is_ai_attack_target(enemy, position)]
                 if not attack_targets:
                     break
-                target_position = min(
-                    attack_targets, key=lambda position:
-                    self._enemy_target_score(enemy, position))
+                target_position = self._choose_ai_candidate([
+                    (self._enemy_target_score(enemy, position), position)
+                    for position in attack_targets])
                 attacked, attack_events = self.attack(enemy, target_position)
                 events.extend(attack_events)
                 if not attacked or enemy.attacked:

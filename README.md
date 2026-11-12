@@ -90,3 +90,16 @@ Click a non-neutral country's territory and confirm the in-app prompt to start t
 - Reduced country color saturation and switched map zoom/pan to coalesced Canvas camera transforms without rebuilding the map on each input event.
 - Kept territory painting, city ownership colors, unit states, and selection overlays on localized update paths; overview/detail changes switch prebuilt layers after zoom input settles.
 - Filled triangular gaps at three-cell corners with three equal-area pieces: majority fill when colors repeat, or one piece per tile fill when all three differ; city, national, selection, and movement boundaries use the same inner-circle arc geometry.
+
+### v0.5
+- Cached local AI target factors and unit positions to reduce repeated full-army scans without changing scores or tactical statuses.
+- Replaced full-map hex hit scans with constant-size geometric candidate checks.
+- Let the editor open maps with malformed territory grids and clear invalid assignments for repair; game loading remains strict.
+- Preserved the editor's current zoom when opening maps and showed tool controls only for the active editing mode.
+- Reused computed movement paths and added a 0.4-second player movement animation.
+- Removed Plain and Water terrain symbols while retaining their terrain fills.
+- Added setup-time overview country selection and a country briefing with cities, forces, income and reserves; unit HP appears after country selection.
+- Replaced city name labels with compact cards showing HP and all three city/production levels.
+- Added city names and simplified unit marks in overview; city detail markers use a level badge, adjacent Roman-numeral production bars and faction-colored health bar with gray damage remainder.
+- Used overlapping circular terrain fills, muted country colors, and prebuilt overview/detail Canvas layers with grouped visibility; cached screen geometry and maintained one model-wide unit-position index.
+- Removed unused movement-range edge collection and obsolete city HP constants.

@@ -9,7 +9,6 @@ UNIT_TYPES = {
         "range": 1, 
         "hp": 80, 
         "movement": 18, 
-        "mark": "I",
     },
     "Tank": {
         "cost": {"money": 160, "steel": 35, "technology": 5},
@@ -17,7 +16,6 @@ UNIT_TYPES = {
         "range": 1, 
         "hp": 150, 
         "movement": 15, 
-        "mark": "T",
     },
     "Artillery": {
         "cost": {"money": 120, "steel": 15, "technology": 10},
@@ -25,7 +23,6 @@ UNIT_TYPES = {
         "range": 2, 
         "hp": 90, 
         "movement": 12, 
-        "mark": "A",
     },
 }
 
@@ -33,7 +30,6 @@ TRANSPORT_STATS = {
     "attack": 10, 
     "range": 1,   
     "movement": 12,   
-    "mark": "S",
 }
 
 TERRAIN_COLORS = {
@@ -67,9 +63,6 @@ CITY_HP_PER_LEVEL = 24
 CITY_MAX_LEVEL = 6
 CITY_MAX_HP = CITY_BASE_HP + (CITY_MAX_LEVEL - 1) * CITY_HP_PER_LEVEL
 CITY_HEAL_PER_TURN = 12  
-
-
-CITY_CAPTURE_HP_RATIO = 0
 
 
 def city_hp_for_level(level):

@@ -62,13 +62,14 @@ class EditorMapModel(object):
                        (unit["col"], unit["row"]))
             for unit in map_data["units"]
         ]
+        self.units_by_position = {unit.position: unit for unit in self.units}
         self.river_edges = {
             frozenset((tuple(edge[0]), tuple(edge[1])))
             for edge in map_data["rivers"]
         }
 
     def unit_at(self, position):
-        return next((unit for unit in self.units if unit.position == position), None)
+        return self.units_by_position.get(position)
 
     def faction_for(self, country_id):
         return next(country["faction"] for country in self.countries
@@ -195,25 +196,30 @@ class MapEditorApp(object):
             ttk.Radiobutton(edit_tab, text=label, value=label, variable=self.mode,
                             command=self._update_tool_state).pack(anchor="w", pady=2)
 
+        self.terrain_controls = ttk.Frame(edit_tab)
+        self.terrain_controls.pack(fill="x")
         self.terrain_choice = ttk.Combobox(
-            edit_tab, textvariable=self.terrain, values=tuple(TERRAIN_COLORS.keys()),
-            state="readonly")
+            self.terrain_controls, textvariable=self.terrain,
+            values=tuple(TERRAIN_COLORS.keys()), state="readonly")
         self.terrain_choice.pack(fill="x", pady=(5, 8))
-        ttk.Label(edit_tab, text="City name").pack(anchor="w")
-        self.city_name_entry = ttk.Entry(edit_tab, textvariable=self.city_name)
+
+        self.city_controls = ttk.Frame(edit_tab)
+        self.city_controls.pack(fill="x")
+        ttk.Label(self.city_controls, text="City name").pack(anchor="w")
+        self.city_name_entry = ttk.Entry(self.city_controls, textvariable=self.city_name)
         self.city_name_entry.pack(fill="x", pady=(3, 7))
-        ttk.Label(edit_tab, text="City country").pack(anchor="w")
-        self.city_owner_choice = ttk.Combobox(edit_tab, textvariable=self.city_owner,
+        ttk.Label(self.city_controls, text="City country").pack(anchor="w")
+        self.city_owner_choice = ttk.Combobox(self.city_controls, textvariable=self.city_owner,
                                               state="readonly")
         self.city_owner_choice.pack(fill="x", pady=(0, 5))
-        city_level_row = ttk.Frame(edit_tab)
+        city_level_row = ttk.Frame(self.city_controls)
         city_level_row.pack(fill="x", pady=(0, 8))
         ttk.Label(city_level_row, text="City level").pack(side="left")
         self.city_level_spin = tk.Spinbox(
             city_level_row, from_=1, to=CITY_MAX_LEVEL, width=4,
             textvariable=self.city_level, command=self._update_city_hp_preview)
         self.city_level_spin.pack(side="right")
-        production_levels = ttk.Frame(edit_tab)
+        production_levels = ttk.Frame(self.city_controls)
         production_levels.pack(fill="x", pady=(0, 5))
         for label, variable, attribute in (
                 ("Industry", self.industry_level, "industry_level_spin"),
@@ -225,22 +231,27 @@ class MapEditorApp(object):
                                  textvariable=variable)
             spinbox.pack(side="right", padx=(2, 8))
             setattr(self, attribute, spinbox)
-        ttk.Label(edit_tab, textvariable=self.city_hp_preview).pack(anchor="w", pady=(0, 7))
-        city_buttons = ttk.Frame(edit_tab)
+        ttk.Label(self.city_controls, textvariable=self.city_hp_preview).pack(anchor="w", pady=(0, 7))
+        city_buttons = ttk.Frame(self.city_controls)
         city_buttons.pack(fill="x", pady=(0, 7))
         ttk.Button(city_buttons, text="Apply city", command=self._apply_city).pack(
             side="left", expand=True, fill="x", padx=(0, 3))
         ttk.Button(city_buttons, text="Delete city", command=self._delete_selected_city).pack(
             side="left", expand=True, fill="x", padx=(3, 0))
-        ttk.Label(edit_tab, text="Paint hexes for city").pack(anchor="w")
+        self.territory_controls = ttk.Frame(edit_tab)
+        self.territory_controls.pack(fill="x")
+        ttk.Label(self.territory_controls, text="Paint hexes for city").pack(anchor="w")
         self.territory_choice = ttk.Combobox(
-            edit_tab, textvariable=self.territory_city_var, state="readonly")
+            self.territory_controls, textvariable=self.territory_city_var,
+            state="readonly")
         self.territory_choice.pack(fill="x", pady=(2, 8))
-        self.unit_choice = ttk.Combobox(edit_tab, textvariable=self.unit_kind,
+        self.unit_controls = ttk.Frame(edit_tab)
+        self.unit_controls.pack(fill="x")
+        self.unit_choice = ttk.Combobox(self.unit_controls, textvariable=self.unit_kind,
                                         values=list(UNIT_TYPES.keys()), state="readonly")
         self.unit_choice.pack(fill="x", pady=(0, 5))
-        ttk.Label(edit_tab, text="Starting unit country").pack(anchor="w")
-        self.unit_owner_choice = ttk.Combobox(edit_tab, textvariable=self.unit_owner,
+        ttk.Label(self.unit_controls, text="Starting unit country").pack(anchor="w")
+        self.unit_owner_choice = ttk.Combobox(self.unit_controls, textvariable=self.unit_owner,
                                               state="readonly")
         self.unit_owner_choice.pack(fill="x")
 
@@ -298,6 +309,9 @@ class MapEditorApp(object):
         self.map_view = HexMapView(
             map_frame, EditorMapModel(self.data), self._on_hex_click,
             bg="#dfe7df", highlightthickness=1, highlightbackground="#d2d6cd", cursor="fleur")
+        self.map_view.max_zoom = 4.0
+        self.map_view.detail_threshold = 90.0
+        self.map_view.allow_low_detail_interaction = True
         self.map_view.on_hex_drag = self._on_hex_drag
         self.map_view.bind("<Configure>", self._fit_initial_map, add="+")
         self.map_view.pack(fill="both", expand=True)
@@ -331,6 +345,15 @@ class MapEditorApp(object):
         self.territory_choice.configure(state=territory_state)
         self.unit_choice.configure(state=unit_state)
         self.unit_owner_choice.configure(state=unit_state)
+        for mode, panel in (
+                ("Terrain", self.terrain_controls),
+                ("City", self.city_controls),
+                ("Territory", self.territory_controls),
+                ("Unit", self.unit_controls)):
+            if self.mode.get() == mode:
+                panel.pack(fill="x", pady=(5, 0))
+            else:
+                panel.pack_forget()
 
     def _update_city_hp_preview(self, *args):
         try:
@@ -340,11 +363,13 @@ class MapEditorApp(object):
         self.city_hp_preview.set("Maximum HP: {}".format(hp))
 
     def _country_id_for_name(self, name):
-        return next((country["id"] for country in self.data["countries"]
-                     if country["name"] == name), None)
+        return self.country_ids_by_name.get(name)
 
     def _refresh_country_controls(self, select_id=None):
         countries = self.data["countries"]
+        self.country_ids_by_name = {
+            country["name"]: country["id"] for country in countries
+        }
         names = [country["name"] for country in countries]
         self.city_owner_choice.configure(values=names)
         self.unit_owner_choice.configure(values=names)
@@ -382,8 +407,12 @@ class MapEditorApp(object):
 
     def _refresh_territory_choices(self):
         cities = self.data["cities"]
-        labels = [self.clear_territory_label]
-        labels.extend(self._city_label(city) for city in cities)
+        self.city_positions_by_label = {
+            self._city_label(city): (city["col"], city["row"])
+            for city in cities
+        }
+        labels = [self.clear_territory_label] + list(
+            self.city_positions_by_label)
         selected = self.territory_city_var.get()
         self.territory_choice.configure(values=labels)
         if selected not in labels:
@@ -391,12 +420,7 @@ class MapEditorApp(object):
 
     def _territory_target(self):
         selected = self.territory_city_var.get()
-        if selected == self.clear_territory_label:
-            return None
-        for city in self.data["cities"]:
-            if self._city_label(city) == selected:
-                return city["col"], city["row"]
-        return None
+        return self.city_positions_by_label.get(selected)
 
     def _paint_territory(self, position, update_status=True):
         col, row = position
@@ -653,6 +677,9 @@ class MapEditorApp(object):
             self.map_view.fit_map()
 
     def _on_hex_click(self, position):
+        if self.map_view.low_detail:
+            self.status.set("Zoom in to edit hexes.")
+            return
         col, row = position
         city_owner = self._country_id_for_name(self.city_owner.get())
         unit_owner = self._country_id_for_name(self.unit_owner.get())
@@ -799,7 +826,7 @@ class MapEditorApp(object):
         if not path:
             return
         try:
-            data = load_map_file(path)
+            data = load_map_file(path, allow_invalid_territories=True)
         except (OSError, ValueError) as error:
             messagebox.showerror("Unable to open map", str(error), parent=self.root)
             return
@@ -807,7 +834,7 @@ class MapEditorApp(object):
         self.columns.set(data["columns"])
         self.rows.set(data["rows"])
         self._refresh_country_controls(data["countries"][0]["id"] if data["countries"] else None)
-        self._replace_editor_model(fit=True)
+        self._replace_editor_model(fit=False)
         self.status.set("Map opened: {} x {}, {} cities.".format(
             data["columns"], data["rows"], len(data["cities"])))
 

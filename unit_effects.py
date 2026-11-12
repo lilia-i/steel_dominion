@@ -1,6 +1,7 @@
 import random
 
-from game_config import NEUTRAL
+from game_config import NEUTRAL, TERRAIN_MOVEMENT_COST
+from map_data import hex_neighbor_positions
 
 
 class UnitSkill(object):
@@ -36,11 +37,11 @@ class UnitSkill(object):
 class InfantryTerrainSkill(UnitSkill):
     name = "Terrain training"
     icon = "I"
-    description = "Infantry ignores extra movement cost from land terrain."
+    description = "Infantry uses Plain movement cost on land terrain."
 
     def movement_cost(self, model, unit, terrain, base_cost):
         if not unit.embarked and terrain != "Water":
-            return 1
+            return TERRAIN_MOVEMENT_COST["Plain"]
         return base_cost
 
 
@@ -126,8 +127,8 @@ class FlankedMorale(UnitStatus):
     morale_level = -1
     tactical = True
 
-    def applies(self, model, unit):
-        return _has_opposite_hostiles(model, unit)
+    def applies(self, model, unit, units_by_position=None):
+        return _has_opposite_hostiles(model, unit, units_by_position)
 
 
 class SurroundedMorale(UnitStatus):
@@ -138,10 +139,11 @@ class SurroundedMorale(UnitStatus):
     morale_level = -2
     tactical = True
 
-    def applies(self, model, unit):
-        positions = _neighbor_positions(model, unit.position)
+    def applies(self, model, unit, units_by_position=None):
+        positions = hex_neighbor_positions(unit.position)
         return (all(position in model.tiles for position in positions) and
-                all(_is_hostile_unit(model, unit, position) for position in positions))
+                all(_is_hostile_unit(model, unit, position, units_by_position)
+                    for position in positions))
 
 
 TACTICAL_STATUSES = (SurroundedMorale, FlankedMorale)
@@ -236,11 +238,14 @@ def process_kill(model, unit):
 
 
 def refresh_tactical_statuses(model):
+    units_by_position = getattr(model, "units_by_position", None)
+    if units_by_position is None:
+        units_by_position = {unit.position: unit for unit in model.units}
     for unit in model.units:
         unit.statuses = [status for status in unit.statuses if not status.tactical]
         for status_type in TACTICAL_STATUSES:
             status = status_type()
-            if status.applies(model, unit):
+            if status.applies(model, unit, units_by_position):
                 unit.statuses.append(status)
                 break
 
@@ -251,23 +256,14 @@ def advance_statuses(model):
     refresh_tactical_statuses(model)
 
 
-def _neighbor_positions(model, position):
-    col, row = position
-    if row % 2:
-        directions = ((1, 0), (-1, 0), (0, -1), (1, -1), (0, 1), (1, 1))
-    else:
-        directions = ((1, 0), (-1, 0), (-1, -1), (0, -1), (-1, 1), (0, 1))
-    return tuple((col + delta_col, row + delta_row)
-                 for delta_col, delta_row in directions)
-
-
-def _is_hostile_unit(model, unit, position):
-    other = model.unit_at(position)
+def _is_hostile_unit(model, unit, position, units_by_position=None):
+    other = (units_by_position.get(position) if units_by_position is not None
+             else model.unit_at(position))
     return bool(other and other.faction not in (unit.faction, NEUTRAL))
 
 
-def _has_opposite_hostiles(model, unit):
-    positions = _neighbor_positions(model, unit.position)
-    return any(_is_hostile_unit(model, unit, positions[first]) and
-               _is_hostile_unit(model, unit, positions[second])
+def _has_opposite_hostiles(model, unit, units_by_position=None):
+    positions = hex_neighbor_positions(unit.position)
+    return any(_is_hostile_unit(model, unit, positions[first], units_by_position) and
+               _is_hostile_unit(model, unit, positions[second], units_by_position)
                for first, second in ((0, 1), (2, 5), (3, 4)))

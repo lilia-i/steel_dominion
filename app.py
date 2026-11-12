@@ -166,7 +166,7 @@ class GameApp(object):
                         self._on_setup_country_confirmed)
                     return
             self.selected_hex = position
-            self.selected_unit = None
+            self.selected_unit = self.model.unit_at(position)
             self.attack_target = None
             self.message = "Hex selected."
             self._refresh()
@@ -210,11 +210,16 @@ class GameApp(object):
                 self.selected_hex = self.selected_unit.position
                 self._attack()
                 return
-            if position in self.model.movement_paths(self.selected_unit):
+            movement_paths = self.model.movement_paths(self.selected_unit)
+            if position in movement_paths:
+                moving_unit = self.selected_unit
+                start_position = moving_unit.position
+                movement_path = movement_paths[position]
                 move_snapshot = (copy.deepcopy(self.model)
-                                 if self.selected_unit.id not in self.attacked_unit_ids
+                                 if moving_unit.id not in self.attacked_unit_ids
                                  else None)
-                moved, events = self.model.move(self.selected_unit, position)
+                moved, events = self.model.move(
+                    moving_unit, position, path=movement_path)
                 self._show_events(events)
                 if moved:
                     self.move_undo = (move_snapshot, self.selected_unit.id)
@@ -225,6 +230,9 @@ class GameApp(object):
                     self.message = events[-1]
                 self.attack_target = None
                 self._refresh()
+                if moved and moving_unit.owner == self.player_country_id:
+                    self.map_view.animate_unit_path(
+                        moving_unit.id, start_position, movement_path, 0.4)
                 return
 
         self.selected_hex = position
@@ -599,6 +607,7 @@ class GameApp(object):
         return True
 
     def _refresh(self):
+        self.map_view.allow_low_detail_interaction = not self.campaign_started
         account_country_id = (self.player_country_id if self.campaign_started else
                               self.pending_player_country_id)
         if (self.resource_country_id not in self.model.countries or
@@ -657,7 +666,8 @@ class GameApp(object):
             self.status_label.place_forget()
 
     def _update_map_info(self, city, unit):
-        if not self.campaign_started or self.selected_hex not in self.model.tiles:
+        if (self.selected_hex not in self.model.tiles or
+                (unit is not None and city is None and not self.campaign_started)):
             self.hex_info_panel.place_forget()
             return
 

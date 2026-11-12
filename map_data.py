@@ -10,7 +10,6 @@ MAX_MAP_SIZE = 200
 TERRAINS = tuple(TERRAIN_COLORS.keys())
 RESOURCE_KEYS = ("money", "steel", "technology")
 DEFAULT_RESOURCES = {"money": 16, "steel": 8, "technology": 3}
-DEFAULT_CITY_HP = city_hp_for_level(1)
 
 
 def _validate_size(columns, rows):
@@ -127,7 +126,7 @@ def _upgrade_v6_map(data):
     return upgraded_map
 
 
-def normalize_map_data(data):
+def normalize_map_data(data, allow_invalid_territories=False):
     if not isinstance(data, dict):
         raise ValueError("Map data must be a JSON object.")
     if data.get("version") == 1:
@@ -251,17 +250,25 @@ def normalize_map_data(data):
         normalized_cities.append(normalized_city)
 
     territories = data.get("territories")
-    if not isinstance(territories, list) or len(territories) != rows:
+    if allow_invalid_territories:
+        if not isinstance(territories, list):
+            territories = []
+        territories = territories[:rows] + [[] for _ in range(max(0, rows - len(territories)))]
+    elif not isinstance(territories, list) or len(territories) != rows:
         raise ValueError("Territories must contain one row per map row.")
     normalized_territories = []
     city_positions = set(occupied)
     for row_index, territory_row in enumerate(territories):
-        if not isinstance(territory_row, list) or len(territory_row) != columns:
+        if allow_invalid_territories:
+            if not isinstance(territory_row, list):
+                territory_row = []
+            territory_row = territory_row[:columns] + [None for _ in range(max(0, columns - len(territory_row)))]
+        elif not isinstance(territory_row, list) or len(territory_row) != columns:
             raise ValueError("Every territory row must match the map width.")
         normalized_row = []
         for col, city_position in enumerate(territory_row):
             if normalized_terrain[row_index][col] == "Water":
-                if city_position is not None:
+                if city_position is not None and not allow_invalid_territories:
                     raise ValueError("Sea hexes cannot belong to a city territory.")
                 normalized_row.append(None)
                 continue
@@ -271,6 +278,9 @@ def normalize_map_data(data):
             if (not isinstance(city_position, list) or len(city_position) != 2 or
                     type(city_position[0]) is not int or type(city_position[1]) is not int or
                     tuple(city_position) not in city_positions):
+                if allow_invalid_territories:
+                    normalized_row.append(None)
+                    continue
                 raise ValueError("Territory cells must reference an existing city.")
             normalized_row.append(list(city_position))
         normalized_territories.append(normalized_row)
@@ -376,35 +386,34 @@ def assign_city_territories(columns, rows, city_positions):
 
     index = 0
     while index < len(queue):
-        col, row = queue[index]
+        position = queue[index]
         index += 1
-        if row % 2:
-            directions = ((1, 0), (-1, 0), (0, -1), (1, -1), (0, 1), (1, 1))
-        else:
-            directions = ((1, 0), (-1, 0), (-1, -1), (0, -1), (-1, 1), (0, 1))
-        for delta_col, delta_row in directions:
-            neighbor = (col + delta_col, row + delta_row)
-            if (0 <= neighbor[0] < columns and 0 <= neighbor[1] < rows and
-                    neighbor not in assigned):
-                assigned[neighbor] = assigned[(col, row)]
+        for neighbor in hex_neighbors(columns, rows, position):
+            if neighbor not in assigned:
+                assigned[neighbor] = assigned[position]
                 queue.append(neighbor)
     return assigned
 
 
 def hex_neighbors(columns, rows, position):
+    return [neighbor for neighbor in hex_neighbor_positions(position)
+            if 0 <= neighbor[0] < columns and 0 <= neighbor[1] < rows]
+
+
+def hex_neighbor_positions(position):
     col, row = position
     if row % 2:
         directions = ((1, 0), (-1, 0), (0, -1), (1, -1), (0, 1), (1, 1))
     else:
         directions = ((1, 0), (-1, 0), (-1, -1), (0, -1), (-1, 1), (0, 1))
-    return [(col + delta_col, row + delta_row)
-            for delta_col, delta_row in directions
-            if 0 <= col + delta_col < columns and 0 <= row + delta_row < rows]
+    return tuple((col + delta_col, row + delta_row)
+                 for delta_col, delta_row in directions)
 
 
-def load_map_file(path):
+def load_map_file(path, allow_invalid_territories=False):
     with open(path, "r", encoding="utf-8") as source:
-        return normalize_map_data(json.load(source))
+        return normalize_map_data(
+            json.load(source), allow_invalid_territories=allow_invalid_territories)
 
 
 def save_map_file(path, data):

@@ -98,12 +98,46 @@ class CountryChoiceDialog(_ModalDialog):
         self.on_confirm = on_confirm
         self.country_id = country_id
         country_name = model.country_name(country_id)
-        _ModalDialog.__init__(self, parent, "Choose country", 430, 250)
-        self._build_header(country_name, "Begin the campaign as this country?")
-        content = ttk.Frame(self, padding=(20, 12, 20, 10))
+        country = model.countries[country_id]
+        income = model.income_for(country_id)
+        city_count = model.owned_cities(country_id)
+        unit_count = sum(1 for unit in model.units if unit.owner == country_id)
+        _ModalDialog.__init__(self, parent, "Choose country", 520, 390)
+        self._build_header(
+            country_name, "{}  /  {} cities  /  {} starting units".format(
+                country["faction"].title(), city_count, unit_count))
+        content = ttk.Frame(self, padding=(18, 12, 18, 10))
         content.pack(fill="both", expand=True)
-        ttk.Label(content, text="Confirm this country for your campaign.",
-                  wraplength=370).pack(anchor="w")
+        overview = tk.Frame(content, bg="#e7ebe3", padx=12, pady=9)
+        overview.pack(fill="x", pady=(0, 10))
+        tk.Label(overview, text="CONTROLLED CITIES", bg="#e7ebe3", fg=MUTED,
+                 font=("Segoe UI", 8, "bold")).pack(side="left")
+        tk.Label(overview, text=str(city_count), bg="#e7ebe3", fg=INK,
+                 font=("Georgia", 20, "bold")).pack(side="left", padx=(8, 18))
+        tk.Label(overview, text="STARTING FORCE", bg="#e7ebe3", fg=MUTED,
+                 font=("Segoe UI", 8, "bold")).pack(side="left", padx=(0, 6))
+        tk.Label(overview, text=str(unit_count), bg="#e7ebe3", fg=INK,
+                 font=("Georgia", 16, "bold")).pack(side="left")
+
+        ttk.Label(content, text="INCOME PER TURN", style="Muted.TLabel").pack(
+            anchor="w", pady=(0, 5))
+        income_row = tk.Frame(content, bg=PAPER)
+        income_row.pack(fill="x")
+        resources = country["resources"]
+        for key, label, symbol, panel_color, accent in (
+                ("money", "MONEY", "$", "#f0e7ce", "#9b7836"),
+                ("steel", "STEEL", "S", "#dce7e6", "#52757a"),
+                ("technology", "TECHNOLOGY", "T", "#e2e9dc", "#54724e")):
+            panel = tk.Frame(income_row, bg=panel_color, padx=10, pady=8)
+            panel.pack(side="left", expand=True, fill="x", padx=(0, 5))
+            tk.Label(panel, text="{}  {}".format(symbol, label), bg=panel_color,
+                     fg=accent, font=("Segoe UI", 8, "bold")).pack(anchor="w")
+            tk.Label(panel, text="+{}".format(income[key]), bg=panel_color,
+                     fg=INK, font=("Georgia", 16, "bold")).pack(anchor="w")
+            tk.Label(panel, text="STOCK  {}".format(resources[key]),
+                     bg=panel_color, fg=MUTED,
+                     font=("Segoe UI", 8)).pack(anchor="w")
+
         actions = ttk.Frame(content)
         actions.pack(side="bottom", fill="x", pady=(16, 0))
         ttk.Button(actions, text="Cancel", command=self.close).pack(side="right")

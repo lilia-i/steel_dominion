@@ -342,7 +342,7 @@ class SettingsDialog(_ModalDialog):
                  resource_country_id, campaign_started, current_map_name,
                  history, debug_mode, attack_target,
                  on_resource_selected, on_choose_map, on_campaign_action,
-                 on_change_country, on_attack, on_cancel_attack, on_debug_changed):
+                 on_exit, on_attack, on_cancel_attack, on_debug_changed):
         _ModalDialog.__init__(self, parent, "Campaign settings", 520, 390)
         self.model = model
         self.player_country_id = player_country_id
@@ -352,7 +352,7 @@ class SettingsDialog(_ModalDialog):
         self.on_resource_selected = on_resource_selected
         self.on_choose_map = on_choose_map
         self.on_campaign_action = on_campaign_action
-        self.on_change_country = on_change_country
+        self.on_exit = on_exit
         self.on_attack = on_attack
         self.on_cancel_attack = on_cancel_attack
         self.on_debug_changed = on_debug_changed
@@ -413,7 +413,7 @@ class SettingsDialog(_ModalDialog):
         if campaign_started:
             ttk.Button(self.actions, text="Restart campaign",
                        command=self._campaign_action).pack(fill="x", pady=(0, 4))
-            ttk.Button(self.actions, text="Change country", command=self._change_country).pack(
+            ttk.Button(self.actions, text="Exit", command=self._exit).pack(
                 fill="x", pady=(0, 4))
         if attack_target is not None:
             ttk.Button(self.actions, text="Attack target", style="Accent.TButton",
@@ -483,9 +483,9 @@ class SettingsDialog(_ModalDialog):
         self.close()
         self.on_campaign_action()
 
-    def _change_country(self):
+    def _exit(self):
         self.close()
-        self.on_change_country()
+        self.on_exit()
 
     def _attack(self):
         self.close()

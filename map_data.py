@@ -1,7 +1,15 @@
 import json
 import re
 
-from game_config import ENEMY, NEUTRAL, PLAYER, TERRAIN_COLORS, UNIT_TYPES, city_hp_for_level
+from game_config import (
+    DEFAULT_RESOURCES,
+    ENEMY,
+    NEUTRAL,
+    PLAYER,
+    TERRAIN_COLORS,
+    UNIT_TYPES,
+    city_hp_for_level,
+)
 
 
 MAP_FORMAT_VERSION = 7
@@ -9,9 +17,6 @@ MIN_MAP_SIZE = 4
 MAX_MAP_SIZE = 200
 TERRAINS = tuple(TERRAIN_COLORS.keys())
 RESOURCE_KEYS = ("money", "steel", "technology")
-DEFAULT_RESOURCES = {"money": 16, "steel": 8, "technology": 3}
-
-
 def _validate_size(columns, rows):
     for label, value in (("columns", columns), ("rows", rows)):
         if type(value) is not int or not MIN_MAP_SIZE <= value <= MAX_MAP_SIZE:

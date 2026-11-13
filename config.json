@@ -1,0 +1,62 @@
+{
+  "unit_types": {
+    "Infantry": {
+      "cost": {"money": 80, "steel": 5, "technology": 0},
+      "attack": 20,
+      "range": 1,
+      "hp": 80,
+      "movement": 18
+    },
+    "Tank": {
+      "cost": {"money": 160, "steel": 35, "technology": 5},
+      "attack": 27,
+      "range": 1,
+      "hp": 150,
+      "movement": 15
+    },
+    "Artillery": {
+      "cost": {"money": 120, "steel": 15, "technology": 10},
+      "attack": 29,
+      "range": 2,
+      "hp": 90,
+      "movement": 12
+    }
+  },
+  "transport_stats": {
+    "attack": 10,
+    "range": 1,
+    "movement": 12
+  },
+  "terrain_colors": {
+    "Plain": "#d9dfc9",
+    "Forest": "#a9bda0",
+    "Hill": "#c8bd91",
+    "Desert": "#d7bd82",
+    "Water": "#b6d0d0"
+  },
+  "terrain_movement_cost": {
+    "Plain": 3,
+    "Forest": 6,
+    "Hill": 7,
+    "Desert": 5,
+    "Water": 3
+  },
+  "defensive_terrains": ["Hill", "Forest"],
+  "terrain_defense_bonus": 0,
+  "min_damage": 1,
+  "damage_random_bonus": [-0.15, 0.15],
+  "city_production_per_level": {
+    "money": 20,
+    "steel": 8,
+    "technology": 3
+  },
+  "city_base_hp": 120,
+  "city_hp_per_level": 24,
+  "city_max_level": 6,
+  "city_heal_per_turn": 12,
+  "default_resources": {
+    "money": 16,
+    "steel": 8,
+    "technology": 3
+  }
+}

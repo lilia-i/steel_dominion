@@ -16,6 +16,7 @@ from game_config import (
     TRANSPORT_STATS,
     UNIT_TYPES,
 )
+from app_paths import application_path
 from map_data import hex_neighbors, load_map_file, validate_playable_map
 from unit_effects import (
     advance_statuses,
@@ -102,8 +103,7 @@ class GameModel(object):
         self.units = []
         self.units_by_position = {}
         if map_data is None:
-            map_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                    "maps", "default_map.json")
+            map_path = application_path("maps", "default_map.json")
             map_data = load_map_file(map_path)
         self._create_custom_world(map_data)
         eligible_countries = [country_id for country_id, country in self.countries.items()
@@ -538,11 +538,15 @@ class GameModel(object):
                 targets.add(position)
         return sorted(targets)
 
-    def _ai_recruit(self):
+    def _ai_recruit(self, owner_ids=None):
         events = []
         occupied_positions = set(self.units_by_position)
         for owner_id, country in self.countries.items():
-            if owner_id == self.player_country_id or country["faction"] == NEUTRAL:
+            if country["faction"] == NEUTRAL:
+                continue
+            if owner_ids is None and owner_id == self.player_country_id:
+                continue
+            if owner_ids is not None and owner_id not in owner_ids:
                 continue
             resources = country["resources"]
             kinds = ["Tank", "Artillery", "Infantry"]
@@ -660,32 +664,28 @@ class GameModel(object):
                       if score <= best_score + tolerance]
         return random.choice(candidates)
 
-    def enemy_turn(self):
-        if self.phase not in (PLAYER, ENEMY):
-            return ["It is not the player turn."], self.winner
-
-        self.phase = ENEMY
-        events = ["Enemy forces are taking their turn."]
-        events.extend(self._ai_recruit())
-        for enemy in list(self.units):
-            if (enemy.owner == self.player_country_id or
-                    enemy.faction == NEUTRAL or enemy not in self.units):
+    def _ai_control_units(self, units, target_faction=None):
+        events = []
+        for unit in list(units):
+            if unit.faction == NEUTRAL or unit not in self.units:
                 continue
-            target_faction = (ENEMY if enemy.faction == PLAYER else PLAYER)
-            while enemy in self.units and not enemy.attacked:
-                targets = self._enemy_targets(enemy, target_faction)
+            unit_target_faction = target_faction
+            if unit_target_faction is None:
+                unit_target_faction = (ENEMY if unit.faction == PLAYER else PLAYER)
+            while unit in self.units and not unit.attacked:
+                targets = self._enemy_targets(unit, unit_target_faction)
                 if not targets:
                     break
-                target_factors = self._enemy_target_factors(enemy, targets)
+                target_factors = self._enemy_target_factors(unit, targets)
                 target_position = self._choose_ai_candidate([
                     (self._enemy_target_score(
-                        enemy, position, target_factors=target_factors), position)
+                        unit, position, target_factors=target_factors), position)
                     for position in targets])
-                paths = self.movement_paths(enemy)
+                paths = self.movement_paths(unit)
                 if paths:
                     destination_scores = {
                         position: self._enemy_destination_score(
-                            enemy, position, paths, targets, target_factors)
+                            unit, position, paths, targets, target_factors)
                         for position in paths
                     }
                     best_score = min(score[0]
@@ -702,30 +702,54 @@ class GameModel(object):
                     ]
                     destination = random.choice(best_paths)
                     current_score = self._enemy_target_score(
-                        enemy, target_position, target_factors=target_factors)
+                        unit, target_position, target_factors=target_factors)
                     next_score = destination_scores[destination]
                     if next_score[0] < current_score:
-                        moved, movement_events = self.move(enemy, destination)
+                        moved, movement_events = self.move(unit, destination)
                         if moved:
                             events.extend(movement_events)
                             continue
 
                 attack_targets = [
                     position for position in targets
-                    if self.distance(enemy.position, position) <= enemy.range and
-                    self._is_ai_attack_target(enemy, position)]
+                    if self.distance(unit.position, position) <= unit.range and
+                    self._is_ai_attack_target(unit, position)]
                 if not attack_targets:
                     break
                 target_position = self._choose_ai_candidate([
                     (self._enemy_target_score(
-                        enemy, position, target_factors=target_factors), position)
+                        unit, position, target_factors=target_factors), position)
                     for position in attack_targets])
-                attacked, attack_events = self.attack(enemy, target_position)
+                attacked, attack_events = self.attack(unit, target_position)
                 events.extend(attack_events)
-                if not attacked or enemy.attacked:
+                if not attacked or unit.attacked:
                     break
             if self._check_winner():
                 break
+        return events
+
+    def auto_player_turn(self):
+        if self.phase != PLAYER:
+            return ["It is not the player turn."], self.winner
+        events = ["Automated player actions are complete."]
+        events.extend(self._ai_recruit(owner_ids={self.player_country_id}))
+        player_units = [unit for unit in self.units
+                        if unit.owner == self.player_country_id]
+        target_faction = ENEMY if self.player_faction == PLAYER else PLAYER
+        events.extend(self._ai_control_units(player_units, target_faction))
+        self.winner = self._check_winner()
+        return events, self.winner
+
+    def enemy_turn(self):
+        if self.phase not in (PLAYER, ENEMY):
+            return ["It is not the player turn."], self.winner
+
+        self.phase = ENEMY
+        events = ["Enemy forces are taking their turn."]
+        events.extend(self._ai_recruit())
+        enemy_units = [unit for unit in self.units
+                       if unit.owner != self.player_country_id]
+        events.extend(self._ai_control_units(enemy_units))
 
         self.winner = self._check_winner()
         if self.winner:

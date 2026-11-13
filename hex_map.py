@@ -81,6 +81,7 @@ class HexMapView(tk.Canvas):
         self.max_zoom = 2.0
         self.detail_threshold = 40.0
         self.allow_low_detail_interaction = False
+        self.force_overview = False
         self.pan_x = 0.0
         self.pan_y = 0.0
         self.country_fill_colors = {}
@@ -726,9 +727,11 @@ class HexMapView(tk.Canvas):
         level_width = bar_width * 0.25
         level_top -= level_height * 0.5
         level_left = bar_left + level_radius * 0.75
-        for index, (value, fill) in enumerate((
-                (city["industry_level"], "#c9ac4b"),
-            (city["research_level"], "#b6aec5"))):
+        production_levels = (
+            (city["industry_level"], "#c9ac4b"),
+            (city["research_level"], "#b6aec5"))
+        visible_levels = [item for item in production_levels if item[0] > 0]
+        for index, (value, fill) in enumerate(visible_levels):
             left = level_left + index * level_width
             top = level_top 
             top += diameter * 0.03
@@ -818,7 +821,8 @@ class HexMapView(tk.Canvas):
         self.tag_lower("hex-fill")
         self.tag_lower("hex-corner-gap", "hex-fill")
         self._draw_city_territory_boundaries()
-        self.tag_lower("territory-boundary", "city-detail")
+        if self.find_withtag("city-detail"):
+            self.tag_lower("territory-boundary", "city-detail")
 
         for edge in self.model.river_edges:
             first, second = tuple(edge)
@@ -1421,7 +1425,8 @@ class HexMapView(tk.Canvas):
             self.itemconfigure(item, width=max(0.1, base_width * self.zoom))
 
     def _update_detail_visibility(self):
-        self.low_detail = 2 * self.radius * self.zoom <= self.detail_threshold
+        self.low_detail = (self.force_overview or
+                           2 * self.radius * self.zoom <= self.detail_threshold)
         detailed_state = "hidden" if self.low_detail else "normal"
         overview_state = "normal" if self.low_detail else "hidden"
         terrain_state = ("hidden" if self.low_detail or self.zoom < 0.28

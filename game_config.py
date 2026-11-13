@@ -1,3 +1,8 @@
+import json
+
+from app_paths import application_path
+
+
 PLAYER = "player"
 ENEMY = "enemy"
 NEUTRAL = "neutral"
@@ -61,8 +66,75 @@ CITY_PRODUCTION_PER_LEVEL = {
 CITY_BASE_HP = 120
 CITY_HP_PER_LEVEL = 24
 CITY_MAX_LEVEL = 6
-CITY_MAX_HP = CITY_BASE_HP + (CITY_MAX_LEVEL - 1) * CITY_HP_PER_LEVEL
 CITY_HEAL_PER_TURN = 12  
+DEFAULT_RESOURCES = {"money": 16, "steel": 8, "technology": 3}
+
+
+def _merge_config(target, overrides):
+    if not isinstance(overrides, dict):
+        return
+    for key, value in overrides.items():
+        if key not in target:
+            continue
+        current = target[key]
+        if isinstance(current, dict) and isinstance(value, dict):
+            _merge_config(current, value)
+        elif isinstance(current, tuple) and isinstance(value, list):
+            if all(isinstance(item, str) for item in value):
+                target[key] = tuple(value)
+        elif (isinstance(current, (int, float)) and
+              not isinstance(current, bool) and
+              isinstance(value, (int, float)) and
+              not isinstance(value, bool)):
+            target[key] = value
+        elif isinstance(value, type(current)):
+            target[key] = value
+
+
+def _load_external_config():
+    try:
+        with open(application_path("config.json"), "r") as config_file:
+            overrides = json.load(config_file)
+    except (IOError, OSError, ValueError, TypeError):
+        return
+
+    sections = {
+        "unit_types": UNIT_TYPES,
+        "transport_stats": TRANSPORT_STATS,
+        "terrain_colors": TERRAIN_COLORS,
+        "terrain_movement_cost": TERRAIN_MOVEMENT_COST,
+        "city_production_per_level": CITY_PRODUCTION_PER_LEVEL,
+        "default_resources": DEFAULT_RESOURCES,
+    }
+    for key, target in sections.items():
+        _merge_config(target, overrides.get(key, {}))
+
+    global DEFENSIVE_TERRAINS, TERRAIN_DEFENSE_BONUS, MIN_DAMAGE
+    global DAMAGE_RANDOM_BONUS, CITY_BASE_HP, CITY_HP_PER_LEVEL
+    global CITY_MAX_LEVEL, CITY_MAX_HP, CITY_HEAL_PER_TURN
+
+    value = overrides.get("defensive_terrains")
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        DEFENSIVE_TERRAINS = tuple(value)
+    value = overrides.get("damage_random_bonus")
+    if (isinstance(value, list) and len(value) == 2 and
+            all(isinstance(item, (int, float)) and not isinstance(item, bool)
+                for item in value)):
+        DAMAGE_RANDOM_BONUS = tuple(value)
+    for key, name in (
+            ("terrain_defense_bonus", "TERRAIN_DEFENSE_BONUS"),
+            ("min_damage", "MIN_DAMAGE"),
+            ("city_base_hp", "CITY_BASE_HP"),
+            ("city_hp_per_level", "CITY_HP_PER_LEVEL"),
+            ("city_max_level", "CITY_MAX_LEVEL"),
+            ("city_heal_per_turn", "CITY_HEAL_PER_TURN")):
+        value = overrides.get(key)
+        if (isinstance(value, (int, float)) and not isinstance(value, bool)):
+            globals()[name] = value
+    CITY_MAX_HP = CITY_BASE_HP + (CITY_MAX_LEVEL - 1) * CITY_HP_PER_LEVEL
+
+
+_load_external_config()
 
 
 def city_hp_for_level(level):

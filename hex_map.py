@@ -3,7 +3,8 @@ import time
 import tkinter as tk
 import colorsys
 
-from game_config import NEUTRAL, PLAYER, TERRAIN_COLORS
+from game_config import (NEUTRAL, PLAYER, TERRAIN_COLORS, TRANSPORT_STATS,
+                         UNIT_TYPES)
 from unit_effects import morale_level_for
 
 
@@ -288,9 +289,6 @@ class HexMapView(tk.Canvas):
             delta_x = (current_size[0] - previous_size[0]) / 2.0
             delta_y = (current_size[1] - previous_size[1]) / 2.0
             self.move("all", delta_x, delta_y)
-            self.pan_x += delta_x
-            self.pan_y += delta_y
-            self._canvas_pan = (self.pan_x, self.pan_y)
         else:
             self.after_idle(self._draw_if_empty)
 
@@ -516,9 +514,8 @@ class HexMapView(tk.Canvas):
             items = self.corner_gap_items.get(vertex, {})
             fills = self._corner_gap_fill(self.corner_gap_tiles[vertex])
             geometry = self.corner_gap_geometry.get(vertex)
-            old_items = set(items.values())
-            if geometry and (len(old_items) == 1) != (len(set(fills.values())) == 1):
-                for item in old_items:
+            if geometry:
+                for item in set(items.values()):
                     self.delete(item)
                 items = self._create_corner_gap_pieces(geometry, fills)
                 self.corner_gap_items[vertex] = items
@@ -866,8 +863,8 @@ class HexMapView(tk.Canvas):
             unit_faction = self.model.faction_for(unit.owner)
             unit_color = (self.country_mark_colors.get(unit.owner, "#777777")
                           if unit_faction != NEUTRAL else "#777777")
-            mark = "S" if unit.embarked else {
-                "Infantry": "I", "Tank": "T", "Artillery": "A"}[unit.kind]
+            mark = (TRANSPORT_STATS["symbol"] if unit.embarked else
+                    UNIT_TYPES[unit.kind]["symbol"])
             badge = max(2.8, min(5.0, 5 * self.zoom))
             unit_y = center_y + 3 * self.zoom
             self.overview_unit_items[unit_tag] = self.create_oval(
@@ -1012,6 +1009,38 @@ class HexMapView(tk.Canvas):
         self.unit_animation_after_id = self.after(0, animate_frame)
         return True
 
+    def animate_damage_number(self, position, damage):
+        center_x, center_y = self._screen_center(position)
+        start_y = center_y - 10 * self.zoom
+        text = self.create_text(
+            center_x, start_y, text="-{}".format(damage),
+            fill="#f2eee2", font=("Segoe UI", max(10, int(13 * self.zoom)),
+                                  "bold"),
+            tags=("floating-damage",))
+        start_color = (242, 238, 226)
+        background_color = tuple(
+            channel // 256 for channel in self.winfo_rgb(self.cget("background")))
+        duration = 720
+        started = time.time()
+
+        def animate_frame():
+            if not self.winfo_exists():
+                return
+            progress = min(1.0, (time.time() - started) * 1000.0 / duration)
+            self.coords(text, center_x,
+                        start_y - 28 * self.zoom * progress)
+            color = "#%02x%02x%02x" % tuple(
+                int(start + (end - start) * progress)
+                for start, end in zip(start_color, background_color))
+            self.itemconfigure(text, fill=color)
+            if progress >= 1.0:
+                self.delete(text)
+                return
+            self.after(35, animate_frame)
+
+        self.after(0, animate_frame)
+        return True
+
     def _draw_selection_overlay(self):
         radius = self.radius * self.zoom
         if self.selected_hex in self.model.tiles:
@@ -1047,11 +1076,27 @@ class HexMapView(tk.Canvas):
                 self.selected_unit.owner == getattr(self.model, "player_country_id", None) and
                 not self.selected_unit.attacked):
             if self.selected_unit.movement_left > 0:
-                reachable = set(self.model.movement_paths(self.selected_unit))
-                reachable.add(self.selected_unit.position)
-                self._draw_smooth_cell_boundary(
-                    reachable, "#c08d28", self.zoom * 4,
-                    ("selection-overlay", "move-range"))
+                current_reachable = set(
+                    self.model.movement_paths(self.selected_unit))
+                current_reachable.add(self.selected_unit.position)
+                if getattr(self.selected_unit, "movement_extended", False):
+                    base_reachable = set(self.model.movement_paths(
+                        self.selected_unit,
+                        budget=self.selected_unit.base_movement))
+                    base_reachable.add(self.selected_unit.position)
+                    extended_reachable = current_reachable - base_reachable
+                    self._draw_smooth_cell_boundary(
+                        base_reachable, "#c08d28", self.zoom * 4,
+                        ("selection-overlay", "move-range", "base-move-range"))
+                    if extended_reachable:
+                        self._draw_smooth_cell_boundary(
+                            extended_reachable, "#df7b32", self.zoom * 4,
+                            ("selection-overlay", "move-range",
+                             "extended-move-range"))
+                else:
+                    self._draw_smooth_cell_boundary(
+                        current_reachable, "#c08d28", self.zoom * 4,
+                        ("selection-overlay", "move-range", "base-move-range"))
             for enemy in self.model.units:
                 if enemy.faction in (self.selected_unit.faction, NEUTRAL):
                     continue

@@ -1,62 +1,141 @@
 {
-  "unit_types": {
-    "Infantry": {
-      "cost": {"money": 80, "steel": 5, "technology": 0},
-      "attack": 20,
-      "range": 1,
-      "hp": 80,
-      "movement": 18
-    },
-    "Tank": {
-      "cost": {"money": 160, "steel": 35, "technology": 5},
-      "attack": 27,
-      "range": 1,
-      "hp": 150,
-      "movement": 15
-    },
-    "Artillery": {
-      "cost": {"money": 120, "steel": 15, "technology": 10},
-      "attack": 29,
-      "range": 2,
-      "hp": 90,
-      "movement": 12
-    }
+  "city_base_hp": 120,
+  "city_heal_per_turn": 8,
+  "city_hp_per_level": 24,
+  "city_max_level": 6,
+  "city_production_per_level": {
+    "money": 10,
+    "steel": 4,
+    "technology": 2
+  },
+  "damage_random_bonus": [
+    -0.15,
+    0.15
+  ],
+  "default_resources": {
+    "money": 0,
+    "steel": 0,
+    "technology": 0
+  },
+  "defensive_terrains": [
+    "Hill",
+    "Forest"
+  ],
+  "enemy_ai_units_per_city_level": 1,
+  "language": "zh",
+  "min_damage": 1,
+  "player_ai_units_per_city_level": 0.7,
+  "terrain_colors": {
+    "Desert": "#d7bd82",
+    "Forest": "#a9bda0",
+    "Hill": "#c8bd91",
+    "Plain": "#d9dfc9",
+    "Water": "#b6d0d0"
+  },
+  "terrain_defense_bonus": 0,
+  "terrain_movement_cost": {
+    "Desert": 5,
+    "Forest": 6,
+    "Hill": 7,
+    "Plain": 3,
+    "Water": 3
   },
   "transport_stats": {
     "attack": 10,
+    "category": "ship",
+    "movement": 12,
     "range": 1,
-    "movement": 12
+    "skills": [],
+    "symbol": "S"
   },
-  "terrain_colors": {
-    "Plain": "#d9dfc9",
-    "Forest": "#a9bda0",
-    "Hill": "#c8bd91",
-    "Desert": "#d7bd82",
-    "Water": "#b6d0d0"
-  },
-  "terrain_movement_cost": {
-    "Plain": 3,
-    "Forest": 6,
-    "Hill": 7,
-    "Desert": 5,
-    "Water": 3
-  },
-  "defensive_terrains": ["Hill", "Forest"],
-  "terrain_defense_bonus": 0,
-  "min_damage": 1,
-  "damage_random_bonus": [-0.15, 0.15],
-  "city_production_per_level": {
-    "money": 20,
-    "steel": 8,
-    "technology": 3
-  },
-  "city_base_hp": 120,
-  "city_hp_per_level": 24,
-  "city_max_level": 6,
-  "city_heal_per_turn": 12,
-  "default_resources": {
-    "money": 16,
-    "steel": 8,
-    "technology": 3
+  "unit_maintenance_rate": 0.07,
+  "unit_types": {
+    "Armored Car": {
+      "attack": 20,
+      "category": "armor",
+      "cost": {
+        "money": 115,
+        "steel": 20,
+        "technology": 2
+      },
+      "hp": 110,
+      "id": "Armored Car",
+      "movement": 22,
+      "name_zh": "\u88c5\u7532\u8f66",
+      "range": 1,
+      "skills": [
+        {
+          "bonus": 0.4,
+          "icon": "+",
+          "id": "damage_bonus_vs_category",
+          "target_category": "infantry"
+        }
+      ],
+      "symbol": "A"
+    },
+    "Howitzer": {
+      "attack": 29,
+      "category": "artillery",
+      "cost": {
+        "money": 130,
+        "steel": 15,
+        "technology": 10
+      },
+      "hp": 90,
+      "id": "Artillery",
+      "movement": 12,
+      "name_zh": "\u69b4\u5f39\u70ae",
+      "range": 2,
+      "skills": [
+        {
+          "icon": "!",
+          "id": "artillery_suppression"
+        }
+      ],
+      "symbol": "H"
+    },
+    "Infantry": {
+      "attack": 20,
+      "category": "infantry",
+      "cost": {
+        "money": 80,
+        "steel": 0,
+        "technology": 0
+      },
+      "hp": 80,
+      "id": "Infantry",
+      "movement": 18,
+      "name_zh": "\u6b65\u5175",
+      "range": 1,
+      "skills": [
+        {
+          "icon": "_",
+          "id": "terrain_training",
+          "terrain": "Plain"
+        }
+      ],
+      "symbol": "I"
+    },
+    "Tank": {
+      "attack": 27,
+      "category": "armor",
+      "cost": {
+        "money": 160,
+        "steel": 35,
+        "technology": 5
+      },
+      "hp": 150,
+      "id": "Tank",
+      "movement": 15,
+      "name_zh": "\u5766\u514b",
+      "range": 1,
+      "skills": [
+        {
+          "icon": ">",
+          "id": "tank_momentum"
+        }
+      ],
+      "symbol": "T"
+    }
   }
 }

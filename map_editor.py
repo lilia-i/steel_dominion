@@ -12,6 +12,13 @@ from game_config import (
     city_hp_for_level,
 )
 from hex_map import HexMapView, _country_colors
+from i18n import (
+    LocalizedStringVar,
+    apply_language,
+    load_language,
+    set_language,
+    translate,
+)
 from map_data import (
     MAX_MAP_SIZE,
     MIN_MAP_SIZE,
@@ -25,6 +32,7 @@ from ui_helpers import ScrollableFrame
 
 INK = "#202c27"
 PAPER = "#e8e7df"
+ERASE_LAYERS = ("Unit", "Terrain", "Territory", "City", "River")
 
 
 class EditorMapModel(object):
@@ -95,8 +103,9 @@ class EditorUnit(object):
 class MapEditorApp(object):
     clear_territory_label = "Unassigned (clear)"
 
-    def __init__(self, root):
+    def __init__(self, root, on_close=None):
         self.root = root
+        self.on_close = on_close
         self.root.title("Steel Dominion | Map Editor")
         self.root.geometry("1180x780")
         self.root.minsize(820, 560)
@@ -105,20 +114,28 @@ class MapEditorApp(object):
         self.data = new_map_data()
         self.mode = tk.StringVar(value="Terrain")
         self.terrain = tk.StringVar(value="Forest")
+        self.terrain_display = tk.StringVar(value=translate("Forest"))
         self.city_name = tk.StringVar(value="City")
         self.city_owner = tk.StringVar()
         self.city_level = tk.IntVar(value=1)
         self.industry_level = tk.IntVar(value=1)
         self.research_level = tk.IntVar(value=1)
-        self.city_hp_preview = tk.StringVar(value="Maximum HP: {}".format(city_hp_for_level(1)))
+        self.city_hp_preview = LocalizedStringVar(
+            value="Maximum HP: {}".format(city_hp_for_level(1)))
         self.city_level.trace("w", self._update_city_hp_preview)
         self.selected_city_position = None
+        self.selected_unit_position = None
         self.river_start = None
         self.territory_city_var = tk.StringVar()
         self.unit_kind = tk.StringVar(value="Infantry")
+        self.unit_kind_display = tk.StringVar(value=translate("Infantry"))
         self.unit_owner = tk.StringVar()
+        self.unit_selection_var = LocalizedStringVar(value="No unit selected")
+        self.erase_layer = tk.StringVar(value="Unit")
+        self.erase_layer_display = tk.StringVar(value=translate("Unit"))
         self.country_name = tk.StringVar()
         self.country_faction = tk.StringVar(value=PLAYER)
+        self.country_faction_display = tk.StringVar(value=translate(PLAYER))
         self.country_hue = tk.DoubleVar(value=48)
         self.country_saturation = tk.DoubleVar(value=56)
         self.country_brightness = tk.DoubleVar(value=96)
@@ -134,9 +151,17 @@ class MapEditorApp(object):
         self._initial_fit_done = False
         self.columns = tk.IntVar(value=self.data["columns"])
         self.rows = tk.IntVar(value=self.data["rows"])
-        self.status = tk.StringVar(value="Choose a tool, then click map hexes.")
+        self.status = LocalizedStringVar(
+            value="Choose a tool, then click map hexes.")
         self._build_ui()
         self._replace_editor_model(fit=True)
+        apply_language(self.root)
+
+    def _close_editor(self):
+        if self.on_close is not None:
+            self.on_close()
+        else:
+            self.root.destroy()
 
     def _build_ui(self):
         style = ttk.Style()
@@ -153,6 +178,9 @@ class MapEditorApp(object):
         header.pack_propagate(False)
         tk.Label(header, text="STEEL DOMINION  /  MAP EDITOR", bg=INK, fg="#f5f2e8",
                  font=("Georgia", 16, "bold")).pack(side="left", padx=20, pady=15)
+        self.main_menu_button = ttk.Button(
+            header, text="Back to main menu", command=self._close_editor)
+        self.main_menu_button.pack(side="right", padx=16)
 
         body = ttk.Frame(self.root, padding=12)
         body.pack(fill="both", expand=True)
@@ -199,9 +227,11 @@ class MapEditorApp(object):
         self.terrain_controls = ttk.Frame(edit_tab)
         self.terrain_controls.pack(fill="x")
         self.terrain_choice = ttk.Combobox(
-            self.terrain_controls, textvariable=self.terrain,
-            values=tuple(TERRAIN_COLORS.keys()), state="readonly")
+            self.terrain_controls, textvariable=self.terrain_display,
+            values=self._sorted_translations(TERRAIN_COLORS),
+            state="readonly")
         self.terrain_choice.pack(fill="x", pady=(5, 8))
+        self.terrain_choice.bind("<<ComboboxSelected>>", self._select_terrain)
 
         self.city_controls = ttk.Frame(edit_tab)
         self.city_controls.pack(fill="x")
@@ -247,13 +277,36 @@ class MapEditorApp(object):
         self.territory_choice.pack(fill="x", pady=(2, 8))
         self.unit_controls = ttk.Frame(edit_tab)
         self.unit_controls.pack(fill="x")
-        self.unit_choice = ttk.Combobox(self.unit_controls, textvariable=self.unit_kind,
-                                        values=list(UNIT_TYPES.keys()), state="readonly")
+        self.unit_choice = ttk.Combobox(
+            self.unit_controls, textvariable=self.unit_kind_display,
+            values=self._sorted_translations(UNIT_TYPES), state="readonly")
         self.unit_choice.pack(fill="x", pady=(0, 5))
+        self.unit_choice.bind("<<ComboboxSelected>>", self._select_unit_kind)
         ttk.Label(self.unit_controls, text="Starting unit country").pack(anchor="w")
         self.unit_owner_choice = ttk.Combobox(self.unit_controls, textvariable=self.unit_owner,
                                               state="readonly")
         self.unit_owner_choice.pack(fill="x")
+        ttk.Label(self.unit_controls, textvariable=self.unit_selection_var).pack(
+            anchor="w", pady=(6, 2))
+        unit_buttons = ttk.Frame(self.unit_controls)
+        unit_buttons.pack(fill="x")
+        self.apply_unit_button = ttk.Button(
+            unit_buttons, text="Apply unit", command=self._apply_selected_unit,
+            state="disabled")
+        self.apply_unit_button.pack(side="left", expand=True, fill="x", padx=(0, 3))
+        self.delete_unit_button = ttk.Button(
+            unit_buttons, text="Delete unit", command=self._delete_selected_unit,
+            state="disabled")
+        self.delete_unit_button.pack(side="left", expand=True, fill="x", padx=(3, 0))
+        self.erase_controls = ttk.Frame(edit_tab)
+        ttk.Label(self.erase_controls, text="Erase layer").pack(anchor="w")
+        self.erase_layer_choice = ttk.Combobox(
+            self.erase_controls, textvariable=self.erase_layer_display,
+            values=self._sorted_translations(ERASE_LAYERS),
+            state="readonly")
+        self.erase_layer_choice.pack(fill="x", pady=(2, 0))
+        self.erase_layer_choice.bind(
+            "<<ComboboxSelected>>", self._select_erase_layer)
 
         country_list_frame = ttk.Frame(country_tab)
         country_list_frame.pack(fill="x")
@@ -266,9 +319,14 @@ class MapEditorApp(object):
         ttk.Label(country_form, text="Name").pack(anchor="w")
         ttk.Entry(country_form, textvariable=self.country_name).pack(fill="x", pady=(2, 6))
         ttk.Label(country_form, text="Faction").pack(anchor="w")
-        ttk.Combobox(country_form, textvariable=self.country_faction,
-                     values=(PLAYER, ENEMY, NEUTRAL), state="readonly").pack(
-                         fill="x", pady=(2, 6))
+        self.country_faction_choice = ttk.Combobox(
+            country_form, textvariable=self.country_faction_display,
+            values=self._sorted_translations(
+                value.title() for value in (PLAYER, ENEMY, NEUTRAL)),
+            state="readonly")
+        self.country_faction_choice.pack(fill="x", pady=(2, 6))
+        self.country_faction_choice.bind(
+            "<<ComboboxSelected>>", self._select_country_faction)
         ttk.Label(country_form, text="Country color (HSB)").pack(anchor="w", pady=(2, 2))
         color_preview_row = ttk.Frame(country_form)
         color_preview_row.pack(fill="x", pady=(0, 4))
@@ -345,11 +403,17 @@ class MapEditorApp(object):
         self.territory_choice.configure(state=territory_state)
         self.unit_choice.configure(state=unit_state)
         self.unit_owner_choice.configure(state=unit_state)
+        selected_unit_state = (
+            "normal" if self.mode.get() == "Unit" and
+            self.selected_unit_position is not None else "disabled")
+        self.apply_unit_button.configure(state=selected_unit_state)
+        self.delete_unit_button.configure(state=selected_unit_state)
         for mode, panel in (
                 ("Terrain", self.terrain_controls),
                 ("City", self.city_controls),
                 ("Territory", self.territory_controls),
-                ("Unit", self.unit_controls)):
+                ("Unit", self.unit_controls),
+                ("Erase", self.erase_controls)):
             if self.mode.get() == mode:
                 panel.pack(fill="x", pady=(5, 0))
             else:
@@ -362,6 +426,28 @@ class MapEditorApp(object):
             return
         self.city_hp_preview.set("Maximum HP: {}".format(hp))
 
+    def _select_terrain(self, event=None):
+        selected = self.terrain_display.get()
+        self.terrain.set(next((value for value in TERRAIN_COLORS
+                               if translate(value) == selected), selected))
+
+    def _select_unit_kind(self, event=None):
+        selected = self.unit_kind_display.get()
+        self.unit_kind.set(next((value for value in UNIT_TYPES
+                                 if translate(value) == selected), selected))
+
+    def _select_erase_layer(self, event=None):
+        selected = self.erase_layer_display.get()
+        self.erase_layer.set(next((value for value in ERASE_LAYERS
+                                   if translate(value) == selected), selected))
+
+    def _select_country_faction(self, event=None):
+        selected = self.country_faction_display.get()
+        factions = (PLAYER, ENEMY, NEUTRAL)
+        self.country_faction.set(next((value for value in factions
+                                       if translate(value.title()) == selected),
+                                      selected))
+
     def _country_id_for_name(self, name):
         return self.country_ids_by_name.get(name)
 
@@ -370,7 +456,8 @@ class MapEditorApp(object):
         self.country_ids_by_name = {
             country["name"]: country["id"] for country in countries
         }
-        names = [country["name"] for country in countries]
+        names = sorted((country["name"] for country in countries),
+                   key=lambda name: translate(name).casefold())
         self.city_owner_choice.configure(values=names)
         self.unit_owner_choice.configure(values=names)
         self._refresh_territory_choices()
@@ -382,11 +469,19 @@ class MapEditorApp(object):
             self.unit_owner.set(countries[0]["name"])
 
         self.country_list.delete(0, tk.END)
+        self.country_list._language_original_items = []
         self.country_list_ids = []
-        for country in countries:
+        sorted_countries = sorted(
+            countries,
+            key=lambda country: translate("{}  [{}]".format(
+                country["name"], country["faction"].title())).casefold())
+        countries_by_id = {country["id"]: country for country in countries}
+        for country in sorted_countries:
             self.country_list_ids.append(country["id"])
-            self.country_list.insert(tk.END, "{}  [{}]".format(
-                country["name"], country["faction"].title()))
+            label = "{}  [{}]".format(
+                country["name"], country["faction"].title())
+            self.country_list._language_original_items.append(label)
+            self.country_list.insert(tk.END, translate(label))
         if select_id not in self.country_list_ids:
             select_id = self.country_list_ids[0] if self.country_list_ids else None
         self.selected_country_id = select_id
@@ -399,7 +494,7 @@ class MapEditorApp(object):
         self.country_list.selection_clear(0, tk.END)
         self.country_list.selection_set(index)
         self.country_list.see(index)
-        self._load_country_fields(countries[index])
+        self._load_country_fields(countries_by_id[select_id])
 
     @staticmethod
     def _city_label(city):
@@ -411,8 +506,9 @@ class MapEditorApp(object):
             self._city_label(city): (city["col"], city["row"])
             for city in cities
         }
-        labels = [self.clear_territory_label] + list(
-            self.city_positions_by_label)
+        labels = [self.clear_territory_label] + sorted(
+            self.city_positions_by_label,
+            key=lambda label: translate(label).casefold())
         selected = self.territory_city_var.get()
         self.territory_choice.configure(values=labels)
         if selected not in labels:
@@ -507,21 +603,106 @@ class MapEditorApp(object):
         if not city:
             return False
         self.data["cities"].remove(city)
-        for territory_row in self.data["territories"]:
+        surviving_city_positions = [
+            (item["col"], item["row"]) for item in self.data["cities"]]
+        for row, territory_row in enumerate(self.data["territories"]):
             for col, city_position in enumerate(territory_row):
                 if city_position is not None and tuple(city_position) == position:
-                    territory_row[col] = None
+                    terrain = self.data["terrain"][row][col]
+                    replacement = self._nearest_city_position(
+                        (col, row), surviving_city_positions)
+                    territory_row[col] = (list(replacement)
+                                           if replacement is not None and terrain != "Water"
+                                           else None)
+        for city_position in surviving_city_positions:
+            col, row = city_position
+            self.data["territories"][row][col] = [col, row]
         if self.selected_city_position == position:
             self.selected_city_position = None
         self._refresh_territory_choices()
         self._replace_editor_model()
-        self.status.set("{} deleted; its land territory is unassigned.".format(city["name"]))
+        self.status.set("{} deleted; its land territory was reassigned.".format(
+            city["name"]))
         return True
+
+    @staticmethod
+    def _hex_distance(first, second):
+        first_row, second_row = first[1], second[1]
+        first_axial_col = first[0] - (first_row - (first_row & 1)) // 2
+        second_axial_col = second[0] - (second_row - (second_row & 1)) // 2
+        delta_col = first_axial_col - second_axial_col
+        delta_row = first_row - second_row
+        return (abs(delta_col) + abs(delta_row) +
+                abs(delta_col + delta_row)) // 2
+
+    @classmethod
+    def _nearest_city_position(cls, position, city_positions):
+        if not city_positions:
+            return None
+        return min(city_positions, key=lambda city_position: (
+            cls._hex_distance(position, city_position), city_position))
 
     def _delete_selected_city(self):
         if self.selected_city_position is None or not self._delete_city_at(
                 self.selected_city_position):
             self.status.set("Select a city to delete.")
+
+    def _selected_unit(self):
+        if self.selected_unit_position is None:
+            return None
+        return next((unit for unit in self.data["units"]
+                     if (unit["col"], unit["row"]) ==
+                     self.selected_unit_position), None)
+
+    def _apply_selected_unit(self):
+        unit = self._selected_unit()
+        owner = self._country_id_for_name(self.unit_owner.get())
+        if unit is None:
+            self.status.set("Select a deployed unit first.")
+            return
+        if owner is None:
+            self.status.set("Add a country before placing starting units.")
+            return
+        unit["type"] = self.unit_kind.get()
+        unit["owner"] = owner
+        self.unit_selection_var.set("{} at hex {}, {}".format(
+            self.unit_kind.get(), self.selected_unit_position[0] + 1,
+            self.selected_unit_position[1] + 1))
+        self._replace_editor_model()
+        self.status.set("Starting unit updated.")
+
+    def _delete_selected_unit(self):
+        unit = self._selected_unit()
+        if unit is None:
+            self.selected_unit_position = None
+            self.status.set("Select a deployed unit first.")
+            self._update_tool_state()
+            return
+        self.data["units"].remove(unit)
+        self.selected_unit_position = None
+        self.unit_selection_var.set("No unit selected")
+        self._replace_editor_model()
+        self._update_tool_state()
+        self.status.set("Starting unit deleted.")
+
+    def _select_deployed_unit(self, position):
+        unit = next((unit for unit in self.data["units"]
+                     if (unit["col"], unit["row"]) == position), None)
+        if unit is None:
+            return False
+        self.selected_unit_position = position
+        self.unit_kind.set(unit["type"])
+        self.unit_kind_display.set(translate(unit["type"]))
+        country = next(item for item in self.data["countries"]
+                       if item["id"] == unit["owner"])
+        self.unit_owner.set(country["name"])
+        self.unit_selection_var.set("{} at hex {}, {}".format(
+            unit["type"], position[0] + 1, position[1] + 1))
+        self.map_view.set_selection(position, None, None)
+        self._update_tool_state()
+        self.status.set("{} selected. Apply changes or delete the unit.".format(
+            unit["type"]))
+        return True
 
     def _toggle_river(self, position):
         if self.river_start is None:
@@ -555,6 +736,7 @@ class MapEditorApp(object):
     def _load_country_fields(self, country):
         self.country_name.set(country["name"])
         self.country_faction.set(country["faction"])
+        self.country_faction_display.set(translate(country["faction"].title()))
         for key, variable in self.country_resources.items():
             variable.set(country["resources"][key])
         index = self.country_list_ids.index(country["id"])
@@ -597,7 +779,9 @@ class MapEditorApp(object):
             return
         index = selection[0]
         self.selected_country_id = self.country_list_ids[index]
-        self._load_country_fields(self.data["countries"][index])
+        country = next(country for country in self.data["countries"]
+                   if country["id"] == self.selected_country_id)
+        self._load_country_fields(country)
 
     def _add_country(self):
         index = 1
@@ -676,10 +860,12 @@ class MapEditorApp(object):
             self._initial_fit_done = True
             self.map_view.fit_map()
 
+    @staticmethod
+    def _sorted_translations(values):
+        return sorted((translate(value) for value in values),
+                      key=lambda value: value.casefold())
+
     def _on_hex_click(self, position):
-        if self.map_view.low_detail:
-            self.status.set("Zoom in to edit hexes.")
-            return
         col, row = position
         city_owner = self._country_id_for_name(self.city_owner.get())
         unit_owner = self._country_id_for_name(self.unit_owner.get())
@@ -724,6 +910,8 @@ class MapEditorApp(object):
             self.map_view.set_selection(position, None, None)
             return
         elif self.mode.get() == "Unit":
+            if self._select_deployed_unit(position):
+                return
             if not unit_owner:
                 self.status.set("Add a country before placing starting units.")
                 return
@@ -740,32 +928,73 @@ class MapEditorApp(object):
                 "type": self.unit_kind.get(),
                 "owner": unit_owner,
             })
+            self.selected_unit_position = position
+            self.unit_selection_var.set("{} at hex {}, {}".format(
+                self.unit_kind.get(), col + 1, row + 1))
             self.status.set("{} assigned to {} at hex {}, {}.".format(
                 self.unit_kind.get(), self.unit_owner.get(), col + 1, row + 1))
-        else:
-            self.data["terrain"][row][col] = "Plain"
-            self._delete_city_at(position)
-            self.data["units"] = [
-                unit for unit in self.data["units"]
-                if (unit["col"], unit["row"]) != position
-            ]
-            self.data["territories"][row][col] = None
-            self.data["rivers"] = [
-                edge for edge in self.data["rivers"]
-                if position not in (tuple(edge[0]), tuple(edge[1]))
-            ]
-            self.status.set("Hex {}, {} cleared.".format(col + 1, row + 1))
+            self._update_tool_state()
+        elif self.mode.get() == "Erase":
+            layer = self.erase_layer.get()
+            if layer == "Unit":
+                unit = next((unit for unit in self.data["units"]
+                             if (unit["col"], unit["row"]) == position), None)
+                if unit is None:
+                    self.status.set("No starting unit on this hex.")
+                else:
+                    self.data["units"].remove(unit)
+                    if self.selected_unit_position == position:
+                        self.selected_unit_position = None
+                        self.unit_selection_var.set("No unit selected")
+                    self.status.set("Starting unit erased.")
+            elif layer == "City":
+                if self._delete_city_at(position):
+                    return
+                self.status.set("No city on this hex.")
+            elif layer == "River":
+                river_index = next((index for index, edge in enumerate(self.data["rivers"])
+                                    if position in (tuple(edge[0]), tuple(edge[1]))), None)
+                if river_index is None:
+                    self.status.set("No river edge on this hex.")
+                else:
+                    self.data["rivers"].pop(river_index)
+                    self.status.set("River edge erased.")
+            elif layer == "Terrain":
+                if self.data["terrain"][row][col] == "Plain":
+                    self.status.set("Terrain is already Plain.")
+                else:
+                    self.data["terrain"][row][col] = "Plain"
+                    if self.data["territories"][row][col] is None:
+                        city_positions = [
+                            (city["col"], city["row"])
+                            for city in self.data["cities"]]
+                        nearest_city = self._nearest_city_position(
+                            position, city_positions)
+                        if nearest_city is not None:
+                            self.data["territories"][row][col] = list(nearest_city)
+                    self.status.set("Terrain erased.")
+            else:
+                if self.data["territories"][row][col] is None:
+                    self.status.set("No territory assignment on this hex.")
+                else:
+                    self.data["territories"][row][col] = None
+                    self.status.set("Territory assignment erased.")
         self._replace_editor_model()
 
     def _new_map(self):
-        if not messagebox.askyesno("New map", "Discard the current map and create a blank one?",
+        if not messagebox.askyesno(translate("New map"),
+                       translate("Discard the current map and create a blank one?"),
                                    parent=self.root):
             return
         try:
             self.data = new_map_data(self.columns.get(), self.rows.get())
         except (tk.TclError, ValueError) as error:
-            messagebox.showerror("Invalid map size", str(error), parent=self.root)
+            messagebox.showerror(translate("Invalid map size"), str(error),
+                                 parent=self.root)
             return
+        self.selected_city_position = None
+        self.selected_unit_position = None
+        self.unit_selection_var.set("No unit selected")
         self._refresh_country_controls(self.data["countries"][0]["id"])
         self._replace_editor_model(fit=True)
         self.status.set("Blank {} x {} map created.".format(
@@ -777,20 +1006,17 @@ class MapEditorApp(object):
             rows = self.rows.get()
             resized = new_map_data(columns, rows)
         except (tk.TclError, ValueError) as error:
-            messagebox.showerror("Invalid map size", str(error), parent=self.root)
+            messagebox.showerror(translate("Invalid map size"), str(error),
+                                 parent=self.root)
             return
 
         old_columns = self.data["columns"]
         old_rows = self.data["rows"]
         removed_cities = sum(1 for city in self.data["cities"]
                      if city["col"] >= columns or city["row"] >= rows)
-        removed_units = sum(1 for unit in self.data["units"]
-                    if unit["col"] >= columns or unit["row"] >= rows)
-        if (removed_cities or removed_units) and not messagebox.askyesno(
-            "Resize map", "{} city/cities and {} unit(s) outside the new size will be removed. Continue?".format(
-                removed_cities, removed_units), parent=self.root):
-            return
-
+        removed_units = sum(
+            1 for unit in self.data["units"]
+            if unit["col"] >= columns or unit["row"] >= rows)
         for row in range(min(rows, old_rows)):
             for col in range(min(columns, old_columns)):
                 resized["terrain"][row][col] = self.data["terrain"][row][col]
@@ -799,6 +1025,9 @@ class MapEditorApp(object):
             city for city in self.data["cities"]
             if city["col"] < columns and city["row"] < rows
         ]
+        resized["countries"] = [
+            dict(country, resources=dict(country["resources"]))
+            for country in self.data["countries"]]
         resized["units"] = [
             unit for unit in self.data["units"]
             if unit["col"] < columns and unit["row"] < rows
@@ -808,31 +1037,54 @@ class MapEditorApp(object):
             if all(point[0] < columns and point[1] < rows for point in edge)
         ]
         surviving_cities = {(city["col"], city["row"]) for city in resized["cities"]}
-        for territory_row in resized["territories"]:
+        for row, territory_row in enumerate(resized["territories"]):
             for col, city_position in enumerate(territory_row):
                 if city_position is not None and tuple(city_position) not in surviving_cities:
-                    territory_row[col] = None
+                    nearest_city = self._nearest_city_position(
+                        (col, row), surviving_cities)
+                    territory_row[col] = (list(nearest_city)
+                                           if nearest_city is not None and
+                                           resized["terrain"][row][col] != "Water"
+                                           else None)
+        for city_position in surviving_cities:
+            col, row = city_position
+            resized["territories"][row][col] = [col, row]
         self.data = resized
         self.columns.set(columns)
         self.rows.set(rows)
-        self._refresh_territory_choices()
+        surviving_country_ids = {
+            country["id"] for country in resized["countries"]}
+        selected_country = self.selected_country_id
+        if selected_country not in surviving_country_ids:
+            selected_country = (resized["countries"][0]["id"]
+                                if resized["countries"] else None)
+        self._refresh_country_controls(selected_country)
+        self.selected_city_position = None
+        self.selected_unit_position = None
+        self.unit_selection_var.set("No unit selected")
         self._replace_editor_model(fit=True)
-        self.status.set("Map resized to {} x {}.".format(columns, rows))
+        self.status.set("Map resized to {} x {}. Removed {} city/cities and {} unit(s) outside the new size.".format(
+            columns, rows, removed_cities, removed_units))
 
     def _open_map(self):
         path = filedialog.askopenfilename(
-            parent=self.root, title="Open map",
-            filetypes=(("Steel Dominion map", "*.json"), ("All files", "*.*")))
+            parent=self.root, title=translate("Open map"),
+            filetypes=((translate("Steel Dominion map"), "*.json"),
+                       (translate("All files"), "*.*")))
         if not path:
             return
         try:
             data = load_map_file(path, allow_invalid_territories=True)
         except (OSError, ValueError) as error:
-            messagebox.showerror("Unable to open map", str(error), parent=self.root)
+            messagebox.showerror(translate("Unable to open map"), str(error),
+                                 parent=self.root)
             return
         self.data = data
         self.columns.set(data["columns"])
         self.rows.set(data["rows"])
+        self.selected_city_position = None
+        self.selected_unit_position = None
+        self.unit_selection_var.set("No unit selected")
         self._refresh_country_controls(data["countries"][0]["id"] if data["countries"] else None)
         self._replace_editor_model(fit=False)
         self.status.set("Map opened: {} x {}, {} cities.".format(
@@ -840,20 +1092,23 @@ class MapEditorApp(object):
 
     def _save_map(self):
         path = filedialog.asksaveasfilename(
-            parent=self.root, title="Save map", defaultextension=".json",
-            filetypes=(("Steel Dominion map", "*.json"), ("All files", "*.*")))
+            parent=self.root, title=translate("Save map"), defaultextension=".json",
+            filetypes=((translate("Steel Dominion map"), "*.json"),
+                       (translate("All files"), "*.*")))
         if not path:
             return
         try:
             save_map_file(path, self.data)
         except (OSError, ValueError) as error:
-            messagebox.showerror("Unable to save map", str(error), parent=self.root)
+            messagebox.showerror(translate("Unable to save map"), str(error),
+                                 parent=self.root)
             return
         self.status.set("Map saved to {}.".format(path))
 
 
 def run_editor():
     root = tk.Tk()
+    set_language(load_language())
     MapEditorApp(root)
     root.mainloop()
 

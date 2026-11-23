@@ -28,7 +28,26 @@ py -3.6 -m pip install PyInstaller==4.10
 .\build_portable.ps1
 ```
 
-The output is `dist/SteelDominion/`; keep the whole folder together when moving it. Python 3.6's PyInstaller places runtime files beside the executable rather than in `_internal/`. Edit `maps/` and `config.json` beside the executable. Configuration keys include `unit_types`, `terrain_colors`, `terrain_movement_cost`, `city_production_per_level`, `default_resources`, and the city/combat scalar settings shown in the sample file.
+The output is `dist/SteelDominion/`; keep the whole folder together when moving it. Python 3.6's PyInstaller places runtime files beside the executable rather than in `_internal/`. Edit `maps/` and `config.json` beside the executable. `config.json` is required at startup and is the authoritative source for unit, transport, terrain, resource, city, and combat values; missing or invalid required settings produce a configuration error instead of falling back to duplicate Python defaults.
+
+Add custom unit types directly under `unit_types`. Give each entry a stable `id`; maps and saves use this ID, so keep it unchanged when renaming the unit. The entry key or `name_en` is the English display name, and optional `name_zh` sets the Chinese display name. Display names may contain spaces. Each entry also needs a category, one-character `symbol`, a `cost` with `money`, `steel`, and `technology`, plus positive integer `attack`, `range`, `hp`, and `movement` values. For example:
+
+```json
+"Scout": {
+	"id": "scout",
+	"name_en": "Recon Scout",
+	"name_zh": "Õì²ì±ø",
+	"category": "infantry",
+	"symbol": "R",
+	"cost": {"money": 50, "steel": 3, "technology": 0},
+	"attack": 12,
+	"range": 1,
+	"hp": 60,
+	"movement": 24
+}
+```
+
+Each unit may also define a `skills` list using only the behavior `id`, display `icon`, and that behavior's parameters. Give each unit a category such as `infantry`, `armor`, `artillery`, or `ship`; multiple unit types can share one category. The `damage_bonus_vs_category` skill uses `target_category` and `bonus`, so an armor bonus applies to every current and future unit categorized as `armor`. Other built-in IDs are `terrain_training` (parameter `terrain`), `tank_momentum`, and `artillery_suppression`. Skill names and descriptions are supplied by the game. New behavior IDs still need an implementation in `unit_effects.py`. Transport category, display letter, and optional skills are set under `transport_stats`.
 
 Use **Settings** to browse playable JSON maps, choose a country before starting, and start or restart a campaign. During play the country choice is locked; **Change country** returns to setup. **Debug mode** is off by default; enable it in Settings to show the resource-account selector, map/turn/city diagnostics, hex coordinates, field report, and status text. The player controls only the selected country. Every other non-neutral country, including allies, is controlled by the AI after the player's turn; it favors empty enemy cities and spreads units across targets. Neutral countries neither act nor take damage, and their territory remains gray. The map fills the window; use the mouse wheel to zoom and drag with the left mouse button to pan. **End turn** is in the lower-right corner. Select one of your country's units, move to a highlighted hex, or mark an opposing unit/city in range and use **Attack target** in Settings. River borders are shown in blue; crossing one uses all remaining movement points, including for infantry. Hex colors identify the country owning each city's manually painted territory, and the territory changes color when the city is captured. Country colors are slightly muted; terrain uses restrained single-color symbols over terrain-tinted territory. Cities use building markers, with names and levels shown when zoomed in. Enemy cities block entry while they have HP; attack them to reduce their HP. Garrisoned units and their city share incoming damage, and a friendly garrison heals in its city each round. Infantry ignores extra land-terrain movement costs, tanks regain an attack after a kill, and artillery attacks suppress counterattacks. A surviving unit counterattacks at 75% of its current attack if the attacker is within its range; skills, statuses, and terrain modify counterattack damage. A kill has a 33% chance to grant +25% attack for three rounds; being flanked reduces attack by 25%, while being surrounded reduces it by 50%. Flanking and surrounded penalties disappear immediately when the formation breaks. Unit attack stays at full strength above 50% HP, then decreases linearly to half strength at 0 HP. When a hex is 40 pixels wide or smaller, the map switches to an overview: terrain detail, river strokes, and hex seams disappear while territory boundaries, cities, and units remain visible. Hex selection and editing are disabled in this view; panning remains available.
 
@@ -47,6 +66,7 @@ Click a non-neutral country's territory and confirm the in-app prompt to start t
 - `map_data.py`: version 7 JSON map format, faction/color/river validation, and file operations
 - `map_editor.py`: standalone hex-map editor
 - `game_model.py`: terrain, cities, units, combat, and turn rules
+- `game_ai.py`: AI recruitment, theater priorities, movement, and attacks
 - `unit_effects.py`: extensible unit skills and morale statuses
 - `hex_map.py`: hex drawing, mouse input, zoom, and panning
 - `app.py`: window layout, commands, and status display
@@ -123,3 +143,18 @@ Click a non-neutral country's territory and confirm the in-app prompt to start t
 - Added an Auto action beneath Settings to run the selected country's AI recruitment, movement, and attacks without advancing the turn.
 - Added a main-page map editor entry that opens the existing editor and returns to the main page when closed.
 - Added portable one-folder packaging for Python 3.6 with editable external `maps/` and `config.json` data.
+- Replaced campaign result popups with an in-app summary of final city counts, final turn, and surviving forces; confirming deletes the completed map save and returns to country selection.
+- Added Debug-mode full AI control with automatic map fitting, pause/resume, and exit controls.
+- Persisted cumulative player-side and enemy-side win totals for repeated full AI runs on EU2.
+- Capped AI reinforcements at a minimum of 3 units or the owned city-level total times the faction-specific `player_ai_units_per_city_level` / `enemy_ai_units_per_city_level` setting; the player-controlled country is exempt.
+- Added per-turn maintenance across money, steel, and technology based on configured unit purchase costs and `unit_maintenance_rate`; each resource's total is rounded down after summing and shown beside its income.
+- Added Debug-bar live comparisons for both factions' per-turn resource income and total current unit HP.
+- Units without an attack for more than two full rounds receive triple movement; moving beyond their base range applies a temporary second-level morale penalty that clears after attacking or returning within base range. Base and extended player movement ranges use yellow and orange outlines.
+- Displayed floating, fading damage numbers over units hit by player attacks or counterattacks.
+- Added persistent English and Simplified Chinese UI languages, including the campaign, settings, editor, dynamic status, and battle messages.
+- Improved AI strategy by weighting city level and production in target and recruitment choices, defending threatened low-health cities first, and discouraging crowded movement destinations.
+- Moved AI decisions into `game_ai.py`; units prioritize recapturing cities originally owned by their country, and cities not attacked during the round recover HP at the configured city healing rate.
+- Limited AI movement goals to the local front, reduced city-value pull, increased priority for enemy units in friendly territory, and made in-range attacks take precedence over repositioning.
+- Balanced AI recruitment placement against local force strength, prioritizing outnumbered or besieged cities without prohibiting recruitment when the faction is globally ahead.
+- Added deployed-unit selection and editing, selectable layer erasing, and direct map-edge clipping that reassigns removed-city territory while preserving country data.
+- Sorted map editor country, city-territory, unit, terrain, faction, and erase-layer choices alphabetically while preserving their data mappings.

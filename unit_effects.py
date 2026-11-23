@@ -1,13 +1,16 @@
 import random
 
-from game_config import NEUTRAL, TERRAIN_MOVEMENT_COST
+from game_config import (NEUTRAL, TERRAIN_MOVEMENT_COST, TRANSPORT_STATS,
+                         UNIT_TYPES)
 from map_data import hex_neighbor_positions
 
 
 class UnitSkill(object):
     name = ""
-    icon = "?"
     description = ""
+
+    def __init__(self, definition):
+        self.icon = definition["icon"]
 
     def can_move(self, model, unit):
         return True
@@ -30,45 +33,89 @@ class UnitSkill(object):
     def incoming_damage_multiplier(self, model, unit, attacker, damage_type, terrain):
         return 1.0
 
-    def on_kill(self, model, unit):
+    def on_kill(self, model, unit, movement_before_attack=0):
         return []
 
 
 class InfantryTerrainSkill(UnitSkill):
     name = "Terrain training"
-    icon = "I"
-    description = "Infantry uses Plain movement cost on land terrain."
+    description = "Uses configured terrain movement cost on land."
+
+    def __init__(self, definition):
+        UnitSkill.__init__(self, definition)
+        self.terrain = definition["terrain"]
 
     def movement_cost(self, model, unit, terrain, base_cost):
         if not unit.embarked and terrain != "Water":
-            return TERRAIN_MOVEMENT_COST["Plain"]
+            return TERRAIN_MOVEMENT_COST[self.terrain]
         return base_cost
 
 
 class TankMomentumSkill(UnitSkill):
     name = "Momentum"
-    icon = "T"
-    description = "Destroying an enemy unit restores this turn's attack."
+    description = "A kill preserves remaining movement and restores this turn's attack."
 
-    def on_kill(self, model, unit):
+    def __init__(self, definition):
+        UnitSkill.__init__(self, definition)
+
+    def on_kill(self, model, unit, movement_before_attack=0):
         unit.attacks_left = max(unit.attacks_left, unit.attacks_per_turn)
-        return ["{} can attack again after the kill.".format(unit.kind)]
+        events = ["{} can attack again after the kill.".format(unit.kind)]
+        if movement_before_attack:
+            unit.movement_left = movement_before_attack
+            events.append("{} retained movement after a kill.".format(unit.kind))
+        return events
 
 
 class ArtillerySuppressionSkill(UnitSkill):
     name = "Suppressive fire"
-    icon = "A"
     description = "Units hit by artillery cannot counterattack."
 
     def prevents_counterattack(self, model, attacker, defender, target_position):
         return defender is not None
 
 
-UNIT_SKILLS = {
-    "Infantry": (InfantryTerrainSkill(),),
-    "Tank": (TankMomentumSkill(),),
-    "Artillery": (ArtillerySuppressionSkill(),),
+class DamageBonusVsCategorySkill(UnitSkill):
+    name = "Category bonus"
+
+    def __init__(self, definition):
+        UnitSkill.__init__(self, definition)
+        self.target_category = definition["target_category"]
+        self.bonus = definition["bonus"]
+        self.description = "{}% bonus damage against {} units.".format(
+            int(round(self.bonus * 100)), self.target_category)
+
+    def damage_multiplier(self, model, attacker, defender, city, damage_type, terrain):
+        if (defender is not None and
+                defender.category == self.target_category):
+            return 1.0 + self.bonus
+        return 1.0
+
+
+SKILL_IMPLEMENTATIONS = {
+    "terrain_training": InfantryTerrainSkill,
+    "tank_momentum": TankMomentumSkill,
+    "artillery_suppression": ArtillerySuppressionSkill,
+    "damage_bonus_vs_category": DamageBonusVsCategorySkill,
 }
+
+_unit_categories = set(data["category"] for data in UNIT_TYPES.values())
+_unit_categories.add(TRANSPORT_STATS["category"])
+for _unit_kind, _unit_data in list(UNIT_TYPES.items()) + [
+        ("Transport", TRANSPORT_STATS)]:
+    for _skill in _unit_data.get("skills", ()):
+        if _skill["id"] not in SKILL_IMPLEMENTATIONS:
+            raise ValueError("Unknown skill ID for {}: {}".format(
+                _unit_kind, _skill["id"]))
+        if (_skill["id"] == "terrain_training" and
+                _skill.get("terrain") not in TERRAIN_MOVEMENT_COST):
+            raise ValueError("Terrain training has an unknown terrain.")
+        if (_skill["id"] == "damage_bonus_vs_category" and
+            (_skill.get("target_category") not in _unit_categories or
+                 not isinstance(_skill.get("bonus"), (int, float)) or
+                 isinstance(_skill.get("bonus"), bool) or
+                 _skill["bonus"] < 0)):
+            raise ValueError("Damage bonus skill has an invalid target or bonus.")
 
 
 class UnitStatus(object):
@@ -119,6 +166,14 @@ class MoraleBoost(UnitStatus):
         return self.rounds_left > 0
 
 
+class OverextendedMorale(UnitStatus):
+    name = "Overextended"
+    icon = "!"
+    description = "Overextended movement temporarily reduces attack by 50%."
+    attack_multiplier = 0.5
+    morale_level = -2
+
+
 class FlankedMorale(UnitStatus):
     name = "Flanked"
     icon = "!"
@@ -150,8 +205,13 @@ TACTICAL_STATUSES = (SurroundedMorale, FlankedMorale)
 
 
 def get_unit_skills(unit_or_kind):
-    kind = unit_or_kind if isinstance(unit_or_kind, str) else unit_or_kind.kind
-    return UNIT_SKILLS.get(kind, ())
+    if isinstance(unit_or_kind, str):
+        data = UNIT_TYPES.get(unit_or_kind, {})
+    else:
+        data = (TRANSPORT_STATS if unit_or_kind.embarked else
+                UNIT_TYPES.get(unit_or_kind.kind, {}))
+    return tuple(SKILL_IMPLEMENTATIONS[definition["id"]](definition)
+                 for definition in data.get("skills", ()))
 
 
 def get_unit_statuses(unit):
@@ -221,10 +281,10 @@ def incoming_damage_multiplier_for(model, unit, attacker, damage_type, terrain):
     return result
 
 
-def process_kill(model, unit):
+def process_kill(model, unit, had_full_movement=False):
     events = []
     for skill in get_unit_skills(unit):
-        events.extend(skill.on_kill(model, unit))
+        events.extend(skill.on_kill(model, unit, had_full_movement))
     if random.random() < 0.33:
         existing = next((status for status in unit.statuses
                          if isinstance(status, MoraleBoost)), None)

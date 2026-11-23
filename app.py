@@ -18,7 +18,15 @@ from game_dialogs import (
 from hex_map import HexMapView
 from map_editor import MapEditorApp
 from map_data import load_map_file
-from unit_effects import FlankedMorale, MoraleBoost, SurroundedMorale, refresh_tactical_statuses
+from i18n import (LANGUAGES, LocalizedStringVar, apply_language, load_language, save_language,
+                  set_language, translate)
+from unit_effects import (
+    FlankedMorale,
+    MoraleBoost,
+    OverextendedMorale,
+    SurroundedMorale,
+    refresh_tactical_statuses,
+)
 
 
 INK = "#202c27"
@@ -30,7 +38,9 @@ GREEN = "#47745f"
 class GameApp(object):
     def __init__(self, root):
         self.root = root
-        self.root.title("Steel Dominion | Hex Campaign")
+        self.language = load_language()
+        set_language(self.language)
+        self.root.title(translate("Steel Dominion | Hex Campaign", self.language))
         self.root.geometry("640x420")
         self.root.minsize(640, 420)
         self.root.configure(bg=PAPER)
@@ -57,6 +67,14 @@ class GameApp(object):
         self.move_undo = None
         self.attacked_unit_ids = set()
         self.ai_running = False
+        self.full_ai_mode = False
+        self.full_ai_paused = False
+        self._full_ai_after_id = None
+        self._eu2_ai_result_recorded = False
+        self._result_was_full_ai = False
+        self.eu2_ai_stats_path = os.path.join(
+            self.saves_directory, "EU2_ai_results.json")
+        self.eu2_ai_stats = self._load_eu2_ai_stats()
         self.ai_result_queue = queue.Queue()
         self._entry_page = None
         self._editor_window = None
@@ -68,6 +86,7 @@ class GameApp(object):
         self._last_saved_payload = None
         self.message = "Choose your country, then start the campaign."
         self._build_ui()
+        apply_language(self.root, self.language)
         self._log("Choose a country to begin the campaign.")
         self._refresh()
 
@@ -90,8 +109,13 @@ class GameApp(object):
 
         self.stat_vars = {key: tk.StringVar(value="-")
                           for key in ("money", "steel", "technology")}
-        self.income_vars = {key: tk.StringVar(value="+0/turn")
+        self.income_vars = {key: tk.StringVar(value="+0")
                     for key in ("money", "steel", "technology")}
+        self.maintenance_vars = {key: tk.StringVar(value="-0")
+                     for key in ("money", "steel", "technology")}
+        self.income_suffix_var = LocalizedStringVar(value="/turn")
+        self.debug_income_comparison = LocalizedStringVar()
+        self.debug_hp_comparison = LocalizedStringVar()
         self.game_area = tk.Frame(self.root, bg="#dfe7df")
         self.game_area.pack(fill="both", expand=True)
         self.map_view = HexMapView(
@@ -118,9 +142,23 @@ class GameApp(object):
             tk.Label(cell, textvariable=self.income_vars[key], bg="#d9ddd5",
                      fg=GREEN, font=("Consolas", 8, "bold")).pack(
                          side="left", padx=(5, 0))
+            tk.Label(cell, textvariable=self.maintenance_vars[key],
+                     bg="#d9ddd5", fg="#b75a52",
+                     font=("Consolas", 8, "bold")).pack(side="left")
+            tk.Label(cell, textvariable=self.income_suffix_var,
+                     bg="#d9ddd5", fg=GREEN,
+                     font=("Consolas", 8, "bold")).pack(side="left")
         self.settings_button = ttk.Button(
             self.resource_strip, text="Settings", command=self._show_settings)
         self.settings_button.pack(side="right", padx=8, pady=3)
+        self.debug_comparison = tk.Frame(self.resource_strip, bg="#d9ddd5")
+        tk.Label(self.debug_comparison, textvariable=self.debug_income_comparison,
+                 bg="#d9ddd5", fg=INK, font=("Consolas", 8, "bold")).pack(
+                     anchor="e")
+        tk.Label(self.debug_comparison, textvariable=self.debug_hp_comparison,
+                 bg="#d9ddd5", fg=GREEN, font=("Consolas", 8, "bold")).pack(
+                     anchor="e")
+        self.debug_comparison.pack(side="right", padx=(0, 8))
         self.auto_button = ttk.Button(
             self.root, text="Auto", command=self._auto_player_turn)
 
@@ -151,17 +189,101 @@ class GameApp(object):
         self.end_turn_button = ttk.Button(
             self.map_view, text="End turn  >", style="Accent.TButton",
             command=self._end_turn)
-        self.status_var = tk.StringVar(value=self.message)
+        self.status_var = LocalizedStringVar(value=self.message)
         self.status_label = tk.Label(
             self.map_view, textvariable=self.status_var, anchor="w", padx=8, pady=4,
             bg="#f4f3ed", fg="#526057", font=("Segoe UI", 9))
         self._build_map_sidebar()
         self._build_entry_page()
+        self._build_result_overlay()
+
+    def _build_result_overlay(self):
+        self.result_overlay = tk.Frame(self.root, bg="#dfe7df")
+        panel = tk.Frame(self.result_overlay, bg=PAPER, padx=30, pady=26,
+                         highlightthickness=1, highlightbackground="#aeb8ac")
+        panel.place(relx=0.5, rely=0.5, anchor="center")
+        self.result_title = LocalizedStringVar()
+        self.result_city_vars = [LocalizedStringVar(), LocalizedStringVar()]
+        self.result_turn_var = LocalizedStringVar()
+        self.result_unit_var = LocalizedStringVar()
+        self.result_stats_var = LocalizedStringVar()
+        self.result_error_var = LocalizedStringVar()
+        tk.Label(panel, textvariable=self.result_title, bg=PAPER, fg=INK,
+                 font=("Georgia", 22, "bold")).pack(anchor="w", pady=(0, 14))
+        for variable in self.result_city_vars:
+            tk.Label(panel, textvariable=variable, bg=PAPER, fg=INK,
+                     font=("Segoe UI", 11)).pack(anchor="w", pady=3)
+        tk.Label(panel, textvariable=self.result_turn_var, bg=PAPER, fg=INK,
+                 font=("Segoe UI", 11)).pack(anchor="w", pady=3)
+        tk.Label(panel, textvariable=self.result_unit_var, bg=PAPER, fg=INK,
+                 font=("Segoe UI", 11)).pack(anchor="w", pady=3)
+        self.result_stats_label = tk.Label(
+            panel, textvariable=self.result_stats_var, bg="#e7ebe3", fg=INK,
+            justify="left", wraplength=410, padx=10, pady=8,
+            font=("Segoe UI", 10, "bold"))
+        self.result_error_label = tk.Label(
+            panel, textvariable=self.result_error_var, bg=PAPER, fg="#a3443c",
+            justify="left", wraplength=410, font=("Segoe UI", 9))
+        self.result_confirm_button = ttk.Button(
+            panel, text="Confirm", style="Accent.TButton",
+            command=self._close_result)
+        self.result_confirm_button.pack(anchor="e", pady=(20, 0))
+        self.result_overlay.place_forget()
+
+    def _load_eu2_ai_stats(self):
+        try:
+            with open(self.eu2_ai_stats_path, "r") as stats_file:
+                stats = json.load(stats_file)
+            return {
+                "games": max(0, int(stats.get("games", 0))),
+                "player_wins": max(0, int(stats.get("player_wins", 0))),
+                "enemy_wins": max(0, int(stats.get("enemy_wins", 0))),
+            }
+        except (IOError, OSError, ValueError, TypeError, AttributeError):
+            return {"games": 0, "player_wins": 0, "enemy_wins": 0}
+
+    def _is_eu2_map(self):
+        return os.path.basename(self.current_map_path).lower() == "eu2.json"
+
+    def _record_eu2_ai_result(self, winner):
+        if self._eu2_ai_result_recorded or not self._is_eu2_map():
+            return
+        self._eu2_ai_result_recorded = True
+        self.eu2_ai_stats["games"] += 1
+        key = "player_wins" if winner == PLAYER else "enemy_wins"
+        self.eu2_ai_stats[key] += 1
+        try:
+            if not os.path.isdir(self.saves_directory):
+                os.makedirs(self.saves_directory)
+            temporary_path = self.eu2_ai_stats_path + ".tmp"
+            with open(temporary_path, "w") as stats_file:
+                json.dump(self.eu2_ai_stats, stats_file, indent=2, sort_keys=True)
+                stats_file.write("\n")
+            os.replace(temporary_path, self.eu2_ai_stats_path)
+        except (IOError, OSError):
+            try:
+                if os.path.exists(self.eu2_ai_stats_path + ".tmp"):
+                    os.remove(self.eu2_ai_stats_path + ".tmp")
+            except OSError:
+                pass
 
     def _build_entry_page(self):
         page = tk.Frame(self.root, bg=PAPER)
         masthead = tk.Frame(page, bg=INK, padx=28, pady=24)
         masthead.pack(fill="x")
+        language_row = tk.Frame(masthead, bg=INK)
+        language_row.place(relx=1.0, x=-20, y=18, anchor="ne")
+        self.entry_language_label = tk.Label(
+            language_row, text="Language", bg=INK, fg="#a9b3a9",
+            font=("Segoe UI", 9))
+        self.entry_language_label.pack(side="left", padx=(0, 7))
+        self.entry_language_var = tk.StringVar(value=LANGUAGES[self.language])
+        self.entry_language_choice = ttk.Combobox(
+            language_row, textvariable=self.entry_language_var,
+            values=tuple(LANGUAGES.values()), state="readonly", width=12)
+        self.entry_language_choice.pack(side="left")
+        self.entry_language_choice.bind(
+            "<<ComboboxSelected>>", self._on_entry_language_selected)
         tk.Label(masthead, text="STEEL DOMINION", bg=INK, fg="#a9b3a9",
                  font=("Consolas", 9, "bold")).pack(anchor="w")
         tk.Label(masthead, text="Hex Campaign", bg=INK, fg="#f5f2e8",
@@ -179,13 +301,28 @@ class GameApp(object):
         page.place(relwidth=1, relheight=1)
         page.lift()
 
+    def _on_entry_language_selected(self, event=None):
+        language = next((code for code, label in LANGUAGES.items()
+                         if label == self.entry_language_var.get()), "en")
+        self._set_language(language)
+
+    def _set_language(self, language):
+        self.language = language if language in LANGUAGES else "en"
+        set_language(self.language)
+        save_language(self.language)
+        self.root.title(translate("Steel Dominion | Hex Campaign", self.language))
+        self.entry_language_var.set(LANGUAGES[self.language])
+        apply_language(self.root, self.language)
+        self.status_var.set(self.message)
+        self._refresh()
+
     def _open_map_editor(self):
         if self._editor_window is not None:
             self._editor_window.lift()
             return
         window = tk.Toplevel(self.root)
         self._editor_window = window
-        self._editor_app = MapEditorApp(window)
+        self._editor_app = MapEditorApp(window, self._close_map_editor)
         window.protocol("WM_DELETE_WINDOW", self._close_map_editor)
         self.root.withdraw()
 
@@ -196,6 +333,13 @@ class GameApp(object):
             self._editor_app = None
         self.root.deiconify()
         self.root.lift()
+
+    def _return_to_main_menu(self):
+        self.setup_page_active = False
+        if self._entry_page is None:
+            self._build_entry_page()
+        self._refresh()
+        self._entry_page.lift()
 
     def _build_map_sidebar(self):
         self.map_sidebar = tk.Frame(
@@ -217,7 +361,7 @@ class GameApp(object):
         self.map_list.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         self.map_list.bind("<<ListboxSelect>>", self._on_map_list_selected)
-        self.map_sidebar_status = tk.StringVar(value="")
+        self.map_sidebar_status = LocalizedStringVar(value="")
         tk.Label(self.map_sidebar, textvariable=self.map_sidebar_status,
                  bg=PAPER, fg=MUTED, justify="left", anchor="w",
                  wraplength=185, font=("Segoe UI", 8)).pack(fill="x", pady=(0, 8))
@@ -225,12 +369,18 @@ class GameApp(object):
             self.map_sidebar, text="Load save", command=self._load_selected_save,
             state="disabled")
         self.load_save_button.pack(fill="x")
+        self.main_menu_button = ttk.Button(
+            self.map_sidebar, text="Back to main menu",
+            command=self._return_to_main_menu)
+        self.main_menu_button.pack(fill="x", pady=(8, 0))
 
     def _log(self, message):
         self.history.insert(0, "T{:02d}  {}".format(self.model.turn, message))
         del self.history[40:]
 
     def _show_settings(self):
+        if self.full_ai_mode or self.ai_running:
+            return
         SettingsDialog(
             self.root, self.model, self.player_country_id,
             self.pending_player_country_id, self.resource_country_id,
@@ -238,7 +388,9 @@ class GameApp(object):
             self.debug_mode, self.attack_target,
             self._on_settings_resource_selected, self._open_map_selector,
             self._settings_campaign_action, self._exit_to_country, self._attack,
-            self._cancel_attack, self._on_debug_changed)
+            self._cancel_attack, self._on_debug_changed, self._start_full_ai,
+            self.language,
+            self._set_language)
 
     def _exit_to_country(self):
         if not self.campaign_started:
@@ -265,7 +417,7 @@ class GameApp(object):
         self._refresh()
 
     def _on_hex_click(self, position):
-        if self.ai_running:
+        if self.ai_running or self.full_ai_mode:
             return
         if not self.campaign_started:
             if not self.setup_country_confirmed:
@@ -359,7 +511,7 @@ class GameApp(object):
 
     def _show_recruit_dialog(self):
         city = self.model.cities.get(self.selected_hex)
-        if (not self.campaign_started or self.ai_running or
+        if (not self.campaign_started or self.ai_running or self.full_ai_mode or
             self.model.phase != PLAYER or not city or
                 city["owner"] != self.player_country_id):
             return
@@ -426,12 +578,14 @@ class GameApp(object):
                    command=replace_save).pack(side="right", padx=(0, 8))
         overlay.place(relwidth=1, relheight=1)
         overlay.lift()
+        apply_language(overlay, self.language)
         self._overwrite_prompt = overlay
 
     def _attack(self):
         if not self.selected_unit or self.attack_target is None:
             return
         attacked, events = self.model.attack(self.selected_unit, self.attack_target)
+        damage_events = list(self.model.last_damage_events)
         self._show_events(events)
         if attacked:
             self.attacked_unit_ids.add(self.selected_unit.id)
@@ -442,6 +596,9 @@ class GameApp(object):
         else:
             self.message = events[-1]
         self._refresh()
+        if attacked:
+            for position, damage in damage_events:
+                self.map_view.animate_damage_number(position, damage)
 
     def _cancel_attack(self):
         self.attack_target = None
@@ -479,7 +636,8 @@ class GameApp(object):
             self._restart()
 
     def _end_turn(self):
-        if not self.campaign_started or self.model.phase != PLAYER:
+        if (not self.campaign_started or self.full_ai_mode or
+            self.model.phase != PLAYER):
             return
         self.move_undo = None
         self.model.phase = ENEMY
@@ -497,6 +655,8 @@ class GameApp(object):
         self.message = "AI is taking actions for this turn..."
         self.auto_button.configure(text="Auto...")
         self._refresh()
+        if not self.full_ai_mode:
+            self.auto_button.configure(text=translate("Auto...", self.language))
         model = copy.deepcopy(self.model)
 
         def calculate_turn():
@@ -518,9 +678,11 @@ class GameApp(object):
             return
         self.ai_running = False
         if error:
+            self.full_ai_mode = False
+            self.full_ai_paused = False
             self.message = "AI actions failed: {}".format(error)
-            self.auto_button.configure(text="Auto failed")
             self._refresh()
+            self.auto_button.configure(text=translate("Auto failed", self.language))
             self.root.after(2200, self._reset_auto_button_label)
             return
 
@@ -534,15 +696,22 @@ class GameApp(object):
             self.selected_hex = self.selected_unit.position
         self.attack_target = None
         self.message = events[-1] if events else "AI actions complete."
-        self.auto_button.configure(text="Auto done")
         self._refresh()
-        self.root.after(2200, self._reset_auto_button_label)
         if winner:
             self._announce_result()
+        elif self.full_ai_mode:
+            self.model.phase = ENEMY
+            self.ai_running = True
+            self.message = "AI forces are taking their turn..."
+            self._refresh()
+            self.root.after(0, self._run_enemy_turn)
+        else:
+            self.auto_button.configure(text=translate("Auto done", self.language))
+            self.root.after(2200, self._reset_auto_button_label)
 
     def _reset_auto_button_label(self):
-        if self.auto_button.winfo_exists():
-            self.auto_button.configure(text="Auto")
+        if self.auto_button.winfo_exists() and not self.full_ai_mode:
+            self.auto_button.configure(text=translate("Auto", self.language))
 
     def _run_enemy_turn(self):
         model = copy.deepcopy(self.model)
@@ -567,6 +736,8 @@ class GameApp(object):
         self.ai_running = False
         if error:
             self.model.phase = PLAYER
+            self.full_ai_mode = False
+            self.full_ai_paused = False
             self.message = "AI turn failed: {}".format(error)
             self._refresh()
             return
@@ -584,6 +755,61 @@ class GameApp(object):
         self._refresh()
         if winner:
             self._announce_result()
+        elif self.full_ai_mode and not self.full_ai_paused:
+            self._schedule_full_ai_round()
+
+    def _start_full_ai(self):
+        if (not self.debug_mode or not self.campaign_started or
+                self.model.phase != PLAYER or self.ai_running):
+            return
+        self.full_ai_mode = True
+        self.full_ai_paused = False
+        self._eu2_ai_result_recorded = False
+        self.map_view.fit_map()
+        self.root.after_idle(self.map_view.fit_map)
+        self.message = "Full AI control started."
+        self._refresh()
+        self._run_full_ai_round()
+
+    def _run_full_ai_round(self):
+        self._full_ai_after_id = None
+        if (not self.full_ai_mode or self.full_ai_paused or self.ai_running or
+                not self.campaign_started or self.model.phase != PLAYER):
+            return
+        self._auto_player_turn()
+
+    def _schedule_full_ai_round(self):
+        if self._full_ai_after_id is None:
+            self._full_ai_after_id = self.root.after(
+                300, self._run_full_ai_round)
+
+    def _toggle_full_ai_pause(self):
+        if not self.full_ai_mode:
+            return
+        self.full_ai_paused = not self.full_ai_paused
+        if self.full_ai_paused:
+            if self._full_ai_after_id is not None:
+                self.root.after_cancel(self._full_ai_after_id)
+                self._full_ai_after_id = None
+            self.message = ("Full AI control will pause after this round."
+                            if self.ai_running else "Full AI control paused.")
+        else:
+            self.message = "Full AI control resumed."
+            if not self.ai_running:
+                self._schedule_full_ai_round()
+        self._refresh()
+
+    def _stop_full_ai(self):
+        if not self.full_ai_mode:
+            return
+        self.full_ai_mode = False
+        self.full_ai_paused = False
+        if self._full_ai_after_id is not None:
+            self.root.after_cancel(self._full_ai_after_id)
+            self._full_ai_after_id = None
+        self.message = ("Full AI control will stop after current AI actions."
+                        if self.ai_running else "Full AI control stopped.")
+        self._refresh()
 
     def _show_events(self, events):
         for event in events:
@@ -593,14 +819,80 @@ class GameApp(object):
         if not self.model.winner or self.result_shown:
             return
         self.result_shown = True
+        self._result_was_full_ai = self.full_ai_mode
+        self.full_ai_mode = False
+        self.full_ai_paused = False
+        if self._full_ai_after_id is not None:
+            self.root.after_cancel(self._full_ai_after_id)
+            self._full_ai_after_id = None
         if self.model.winner == PLAYER:
             self.message = "Victory: all opposing cities have been captured."
             title = "Campaign victory"
         else:
             self.message = "Defeat: all of your faction's cities have fallen."
             title = "Campaign lost"
+        if self._result_was_full_ai and self._is_eu2_map():
+            self._record_eu2_ai_result(self.model.winner)
+        self.result_title.set(title)
+        self.result_city_vars[0].set("Player faction cities: {}".format(
+            self.model.owned_cities(self.model.player_faction)))
+        self.result_city_vars[1].set("Enemy faction cities: {}".format(
+            self.model.owned_cities(self.model.enemy_faction)))
+        self.result_turn_var.set("Final turn: {}".format(self.model.turn))
+        player_units = sum(1 for unit in self.model.units
+                           if unit.faction == self.model.player_faction)
+        enemy_units = sum(1 for unit in self.model.units
+                          if unit.faction == self.model.enemy_faction)
+        self.result_unit_var.set("Surviving units: {} / {}".format(
+            player_units, enemy_units))
+        if self._result_was_full_ai and self._is_eu2_map():
+            self.result_stats_var.set(
+                "EU2 full AI results: {} games / Player {} wins / Enemy {} wins".format(
+                    self.eu2_ai_stats["games"], self.eu2_ai_stats["player_wins"],
+                    self.eu2_ai_stats["enemy_wins"]))
+            self.result_stats_label.pack(fill="x", pady=(14, 0))
+        else:
+            self.result_stats_label.pack_forget()
+        self.result_error_label.pack_forget()
         self._refresh()
-        messagebox.showinfo(title, self.message)
+        self.result_overlay.place(relwidth=1.0, relheight=1.0)
+        self.result_overlay.lift()
+
+    def _close_result(self):
+        save_path = self._save_path_for_map(self.current_map_path)
+        try:
+            if os.path.exists(save_path):
+                os.remove(save_path)
+        except OSError as error:
+            self.result_error_var.set(
+                "Unable to delete campaign save: {}".format(error))
+            self.result_error_label.pack(fill="x", pady=(14, 0),
+                                         before=self.result_confirm_button)
+            return
+
+        self._last_saved_payload = None
+        self.result_overlay.place_forget()
+        self.result_error_label.pack_forget()
+        self.full_ai_mode = False
+        self.full_ai_paused = False
+        self._result_was_full_ai = False
+        if not self.map_records:
+            self._load_map_records()
+        record = next((item for item in self.map_records
+                       if os.path.normcase(os.path.abspath(item["path"])) ==
+                       os.path.normcase(os.path.abspath(self.current_map_path))), None)
+        if record and not record["error"] and self._apply_map_record(record):
+            self._select_map_in_sidebar(record)
+        else:
+            self.campaign_started = False
+            self.setup_page_active = True
+            self.setup_country_confirmed = False
+            self.selected_unit = None
+            self.attack_target = None
+            self.pending_player_country_id = self.player_country_id
+            self.message = "Choose a country to continue."
+            self._refresh()
+        self.root.after_idle(self.map_view.fit_map)
 
     def _restart(self):
         if self.campaign_started:
@@ -667,11 +959,13 @@ class GameApp(object):
             self.map_records.append(record)
 
         self.map_list.delete(0, tk.END)
+        self.map_list._language_original_items = []
         for record in self.map_records:
             label = record["name"]
             if record["error"]:
                 label += "  [INVALID]"
-            self.map_list.insert(tk.END, label)
+            self.map_list._language_original_items.append(label)
+            self.map_list.insert(tk.END, translate(label, self.language))
 
     def _enter_campaign(self):
         self._load_map_records()
@@ -719,8 +1013,8 @@ class GameApp(object):
         record = self.map_records[selection[0]]
         self._selected_map_record = record
         if record["error"]:
-            self.map_sidebar_status.set("This map cannot be played.\n{}".format(
-                record["error"]))
+            self.map_sidebar_status.set(
+                "This map cannot be played.\n{}".format(record["error"]))
             self.load_save_button.configure(state="disabled")
             return
         data = record["data"]
@@ -774,6 +1068,8 @@ class GameApp(object):
                 if isinstance(status, MoraleBoost):
                     statuses.append({"type": "MoraleBoost",
                                      "rounds_left": status.rounds_left})
+                elif isinstance(status, OverextendedMorale):
+                    statuses.append({"type": "OverextendedMorale"})
             units.append({
                 "id": unit.id,
                 "kind": unit.kind,
@@ -784,7 +1080,11 @@ class GameApp(object):
                 "attack": unit.attack,
                 "range": unit.range,
                 "movement": unit.movement,
+                "base_movement": unit.base_movement,
                 "movement_left": unit.movement_left,
+                "unattacked_rounds": unit.unattacked_rounds,
+                "attacked_this_round": unit.attacked_this_round,
+                "movement_extended": unit.movement_extended,
                 "attacks_per_turn": unit.attacks_per_turn,
                 "attacks_left": unit.attacks_left,
                 "embarked": unit.embarked,
@@ -801,7 +1101,8 @@ class GameApp(object):
                 for country_id, country in self.model.countries.items()},
             "cities": [
                 {"position": list(position), "owner": city["owner"],
-                 "health": city["health"], "max_health": city["max_health"]}
+                 "health": city["health"], "max_health": city["max_health"],
+                 "attacked_this_round": city.get("attacked_this_round", False)}
                 for position, city in self.model.cities.items()],
             "units": units,
             "history": self.history[:40],
@@ -848,6 +1149,8 @@ class GameApp(object):
                 city["owner"] = saved_city["owner"]
                 city["health"] = saved_city["health"]
                 city["max_health"] = saved_city["max_health"]
+                city["attacked_this_round"] = saved_city.get(
+                    "attacked_this_round", False)
 
             model.units = []
             model.units_by_position = {}
@@ -861,7 +1164,14 @@ class GameApp(object):
                 unit.attack = saved_unit["attack"]
                 unit.range = saved_unit["range"]
                 unit.movement = saved_unit["movement"]
+                unit.movement_extended = saved_unit.get("movement_extended", False)
+                unit.base_movement = saved_unit.get(
+                    "base_movement", unit.movement // 3
+                    if unit.movement_extended else unit.movement)
                 unit.movement_left = saved_unit["movement_left"]
+                unit.unattacked_rounds = saved_unit.get("unattacked_rounds", 0)
+                unit.attacked_this_round = saved_unit.get(
+                    "attacked_this_round", False)
                 unit.attacks_per_turn = saved_unit["attacks_per_turn"]
                 unit.attacks_left = saved_unit["attacks_left"]
                 unit.embarked = saved_unit["embarked"]
@@ -870,6 +1180,8 @@ class GameApp(object):
                         status = MoraleBoost()
                         status.rounds_left = status_data["rounds_left"]
                         unit.statuses.append(status)
+                    elif status_data.get("type") == "OverextendedMorale":
+                        unit.statuses.append(OverextendedMorale())
                 model._add_unit(unit)
                 next_unit_id = max(next_unit_id, unit.id + 1)
             Unit.next_id = max(Unit.next_id, next_unit_id)
@@ -897,7 +1209,7 @@ class GameApp(object):
         self.selected_hex = (self.selected_unit.position if self.selected_unit else
                              next(iter(model.cities)))
         self.attack_target = None
-        self.result_shown = bool(model.winner)
+        self.result_shown = False
         self.move_undo = None
         self.attacked_unit_ids.clear()
         self.history = saved.get("history", [])
@@ -906,6 +1218,8 @@ class GameApp(object):
         self.map_view.fit_map(draw=False)
         self._last_saved_payload = None
         self._refresh()
+        if model.winner:
+            self._announce_result()
         return True
 
     def _apply_map_record(self, record):
@@ -913,7 +1227,8 @@ class GameApp(object):
             map_data = record["data"]
             model = GameModel(map_data, self.player_country_id)
         except (OSError, ValueError, TypeError, KeyError) as error:
-            messagebox.showerror("Unable to load map", str(error), parent=self.root)
+            messagebox.showerror(translate("Unable to load map", self.language),
+                                 str(error), parent=self.root)
             return False
 
         self.model = model
@@ -955,40 +1270,75 @@ class GameApp(object):
             self.resource_country_id = account_country_id
         resources = self.model.countries[self.resource_country_id]["resources"]
         income = self.model.income_for(self.resource_country_id)
+        maintenance = self.model.unit_maintenance_for(self.resource_country_id)
         for resource in ("money", "steel", "technology"):
             self.stat_vars[resource].set(str(resources[resource]))
-            self.income_vars[resource].set("+{}/turn".format(income[resource]))
+            self.income_vars[resource].set("+{}".format(income[resource]))
+            self.maintenance_vars[resource].set(
+                "-{}".format(maintenance[resource]))
+
+        player_income = self.model.income_for(self.model.player_faction)
+        enemy_income = self.model.income_for(self.model.enemy_faction)
+        player_hp = sum(unit.hp for unit in self.model.units
+                        if unit.faction == self.model.player_faction)
+        enemy_hp = sum(unit.hp for unit in self.model.units
+                       if unit.faction == self.model.enemy_faction)
+        self.debug_income_comparison.set(
+            "P/E $ {} / {} S {} / {} T {} / {}".format(
+                player_income["money"], enemy_income["money"],
+                player_income["steel"], enemy_income["steel"],
+                player_income["technology"], enemy_income["technology"]))
+        self.debug_hp_comparison.set("HP P/E {} / {}".format(
+            player_hp, enemy_hp))
 
         city = self.model.cities.get(self.selected_hex)
         unit = self.model.unit_at(self.selected_hex)
         self.hex_info_panel.place_forget()
 
         selected_unit = (self.selected_unit if self.selected_unit in self.model.units else None)
-        self.end_turn_button.configure(
-            state="normal" if self.campaign_started and self.model.phase == PLAYER
-            and not self.ai_running
-            else "disabled")
-        self.auto_button.configure(
-            state="normal" if self.campaign_started and self.model.phase == PLAYER
-            and not self.ai_running else "disabled")
+        can_start_turn_action = (
+            self.campaign_started and self.model.phase == PLAYER and
+            not self.ai_running and not self.full_ai_mode)
+        if self.full_ai_mode:
+            pause_label = ("Pausing..." if self.full_ai_paused and self.ai_running
+                           else "Continue" if self.full_ai_paused else "Pause")
+            self.end_turn_button.configure(
+                text=translate(pause_label, self.language),
+                command=self._toggle_full_ai_pause,
+                state="disabled" if self.full_ai_paused and self.ai_running
+                else "normal")
+            self.auto_button.configure(
+                text=translate("Exit full AI", self.language),
+                command=self._stop_full_ai, state="normal")
+        else:
+            self.end_turn_button.configure(
+                text=translate("End turn  >", self.language),
+                command=self._end_turn,
+                state="normal" if can_start_turn_action else "disabled")
+            self.auto_button.configure(
+                text=translate("Auto", self.language),
+                command=self._auto_player_turn,
+                state="normal" if can_start_turn_action else "disabled")
         self.settings_button.configure(
-            state="disabled" if self.ai_running else "normal")
+            state="disabled" if self.ai_running or self.full_ai_mode else "normal")
         self.end_turn_button.place(relx=1.0, rely=1.0, x=-12, y=-12, anchor="se")
         self.unit_info_button.place_forget()
         self.city_recruit_button.place_forget()
         self.undo_move_button.place_forget()
         can_recruit = (self.campaign_started and not self.ai_running and
+                   not self.full_ai_mode and
                    self.model.phase == PLAYER and city and
                        city["owner"] == self.player_country_id)
         can_undo_move = (
-            self.campaign_started and self.model.phase == PLAYER and
+            self.campaign_started and not self.full_ai_mode and
+            self.model.phase == PLAYER and
             selected_unit is not None and
             self.move_undo is not None and
             self.move_undo[0] is not None and
             selected_unit.id == self.move_undo[1] and
             self.move_undo[1] not in self.attacked_unit_ids)
         action_buttons = []
-        if unit:
+        if unit and not self.full_ai_mode:
             action_buttons.append(self.unit_info_button)
         if can_recruit:
             action_buttons.append(self.city_recruit_button)
@@ -1011,14 +1361,21 @@ class GameApp(object):
         if self.campaign_started:
             self.map_sidebar.pack_forget()
             self.resource_strip.place(x=0, y=0, relwidth=1.0, height=36)
+            if self.debug_mode:
+                self.debug_comparison.pack(side="right", padx=(0, 8),
+                                           before=self.settings_button)
+            else:
+                self.debug_comparison.pack_forget()
             self.auto_button.place(relx=1.0, x=-8, y=40, anchor="ne")
         elif self.setup_page_active:
             self.resource_strip.place_forget()
+            self.debug_comparison.pack_forget()
             self.auto_button.place_forget()
             if not self.map_sidebar.winfo_manager():
                 self.map_sidebar.pack(side="right", fill="y")
         else:
             self.resource_strip.place_forget()
+            self.debug_comparison.pack_forget()
             self.auto_button.place_forget()
             self.map_sidebar.pack_forget()
         self._save_campaign()

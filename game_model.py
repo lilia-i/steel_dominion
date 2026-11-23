@@ -11,11 +11,13 @@ from game_config import (
     MIN_DAMAGE,
     NEUTRAL,
     PLAYER,
+    UNIT_MAINTENANCE_RATE,
     TERRAIN_DEFENSE_BONUS,
     TERRAIN_MOVEMENT_COST,
     TRANSPORT_STATS,
     UNIT_TYPES,
 )
+from game_ai import control_units, recruit_units
 from app_paths import application_path
 from map_data import hex_neighbors, load_map_file, validate_playable_map
 from unit_effects import (
@@ -30,6 +32,7 @@ from unit_effects import (
     resolve_attack_target,
     unit_can_attack,
     unit_can_move,
+    OverextendedMorale,
 )
 
 class Unit(object):
@@ -40,6 +43,8 @@ class Unit(object):
         self.id = Unit.next_id
         Unit.next_id += 1
         self.kind = kind
+        self.original_category = info["category"]
+        self.category = self.original_category
         self.owner = owner
         self.faction = faction if faction is not None else owner
         self.position = position
@@ -51,7 +56,11 @@ class Unit(object):
         self.attack = self.original_attack
         self.range = self.original_range
         self.movement = self.original_movement
+        self.base_movement = self.original_movement
         self.movement_left = self.movement
+        self.unattacked_rounds = 0
+        self.attacked_this_round = False
+        self.movement_extended = False
         self.attacks_per_turn = 1
         self.attacks_left = self.attacks_per_turn
         self.embarked = False
@@ -75,17 +84,21 @@ class Unit(object):
         if self.embarked:
             return
         self.embarked = True
+        self.category = TRANSPORT_STATS["category"]
         self.attack = TRANSPORT_STATS["attack"]
         self.range = TRANSPORT_STATS["range"]
-        self.movement = TRANSPORT_STATS["movement"]
+        self.base_movement = TRANSPORT_STATS["movement"]
+        self.movement = self.base_movement * (3 if self.movement_extended else 1)
 
     def disembark(self):
         if not self.embarked:
             return
         self.embarked = False
+        self.category = self.original_category
         self.attack = self.original_attack
         self.range = self.original_range
-        self.movement = self.original_movement
+        self.base_movement = self.original_movement
+        self.movement = self.base_movement * (3 if self.movement_extended else 1)
 
 
 class GameModel(object):
@@ -102,6 +115,7 @@ class GameModel(object):
         self.territory_city = {}
         self.units = []
         self.units_by_position = {}
+        self.last_damage_events = []
         if map_data is None:
             map_path = application_path("maps", "default_map.json")
             map_data = load_map_file(map_path)
@@ -154,6 +168,7 @@ class GameModel(object):
                 "position": position,
                 "name": city_data["name"],
                 "owner": city_data["owner"],
+                "original_owner": city_data["owner"],
                 "city_level": 1,
                 "industry_level": 1,
                 "research_level": 1,
@@ -200,6 +215,11 @@ class GameModel(object):
         self.units.append(unit)
         self.units_by_position[unit.position] = unit
 
+    def _spawn_unit(self, kind, owner, position, faction=None):
+        unit = Unit(kind, owner, position, faction)
+        self._add_unit(unit)
+        return unit
+
     def _remove_unit(self, unit):
         self.units.remove(unit)
         if self.units_by_position.get(unit.position) is unit:
@@ -241,12 +261,14 @@ class GameModel(object):
     def terrain_movement_cost(self, unit, terrain):
         return movement_cost_for(self, unit, terrain, TERRAIN_MOVEMENT_COST[terrain])
 
-    def movement_paths(self, unit):
-        if (unit not in self.units or unit.attacked or unit.movement_left <= 0 or
+    def movement_paths(self, unit, budget=None):
+        custom_budget = budget is not None
+        if (unit not in self.units or unit.attacked or
+                (not custom_budget and unit.movement_left <= 0) or
                 not unit_can_move(self, unit)):
             return {}
 
-        budget = unit.movement_left
+        budget = unit.movement_left if budget is None else budget
         best_cost = {unit.position: 0}
         previous = {}
         queue = [(0, unit.position)]
@@ -266,8 +288,10 @@ class GameModel(object):
                 current_is_water = self.tiles[position] == "Water"
                 next_is_water = self.tiles[neighbor] == "Water"
                 if current_is_water != next_is_water:
-                    if (spent > 0 or budget != unit.movement or
-                            unit.movement_left != unit.movement):
+                    full_budget = (budget == unit.base_movement if custom_budget else
+                                   budget == unit.movement and
+                                   unit.movement_left == unit.movement)
+                    if spent > 0 or not full_budget:
                         continue
                     next_spent = budget
                 elif self.crosses_river(position, neighbor):
@@ -359,6 +383,10 @@ class GameModel(object):
         if not path:
             return False, ["That destination is blocked or out of movement range."]
 
+        base_reachable = None
+        if unit.movement_extended:
+            base_reachable = set(self.movement_paths(unit, budget=unit.base_movement))
+            base_reachable.add(unit.position)
         events = []
         water_transition = None
         crossed_river = False
@@ -383,6 +411,14 @@ class GameModel(object):
             events.extend(self._capture_city(position, unit.owner))
 
         unit.movement_left = 0
+        if unit.movement_extended:
+            if unit.position in base_reachable:
+                self._clear_overextended_morale(unit)
+                unit.movement_extended = False
+                unit.movement = unit.base_movement
+            elif not any(isinstance(status, OverextendedMorale)
+                         for status in unit.statuses):
+                unit.statuses.append(OverextendedMorale())
         refresh_tactical_statuses(self)
         traveled = len(path)
         events.insert(0, "{} moved {} hexes ({} MP left).".format(
@@ -396,6 +432,7 @@ class GameModel(object):
         return True, events
 
     def attack(self, attacker, target_position):
+        self.last_damage_events = []
         if (not self.can_control_unit(attacker) or attacker.attacked or
                 not unit_can_attack(self, attacker)):
             return False, ["This unit cannot attack now."]
@@ -416,7 +453,8 @@ class GameModel(object):
             return False, ["Select an opposing unit or city as the target."]
         if self.distance(attacker.position, target_position) > attacker.range:
             return False, ["The target is out of range."]
-        had_full_movement = attacker.movement_left == attacker.movement
+        movement_before_attack = attacker.movement_left
+        attacker.attacked_this_round = True
 
         terrain_bonus = (TERRAIN_DEFENSE_BONUS
                          if self.tiles[target_position] in DEFENSIVE_TERRAINS else 0)
@@ -449,6 +487,8 @@ class GameModel(object):
                         self.tiles[target_position]))))
                 unit_damage = 0
             city["health"] = max(0, city["health"] - city_damage)
+            if city_damage:
+                city["attacked_this_round"] = True
         elif defender:
             unit_damage = max(MIN_DAMAGE, int(round(
                 unit_damage * damage_multiplier_for(
@@ -460,7 +500,12 @@ class GameModel(object):
         damage = city_damage + unit_damage
         if defender:
             defender.hp -= unit_damage
+            self.last_damage_events.append((defender.position, unit_damage))
         attacker.attacked = True
+        attacker.unattacked_rounds = 0
+        self._clear_overextended_morale(attacker)
+        attacker.movement_extended = False
+        attacker.movement = attacker.base_movement
         attacker.movement_left = 0
         attacker_country = self.country_name(attacker.owner)
         events = ["{} {} dealt {} damage.".format(attacker_country, attacker.kind, damage)]
@@ -474,10 +519,7 @@ class GameModel(object):
             events.append("{} {} was destroyed.".format(
                 self.country_name(defender.owner), defender.kind))
             refresh_tactical_statuses(self)
-            events.extend(process_kill(self, attacker))
-            if attacker.kind == "Tank" and had_full_movement:
-                attacker.movement_left = attacker.movement
-                events.append("Tank retained movement after a kill.")
+            events.extend(process_kill(self, attacker, movement_before_attack))
         elif (defender and defender in self.units and
               self.distance(attacker.position, defender.position) <= defender.range):
             events.extend(self._counterattack(attacker, defender, target_position))
@@ -489,6 +531,7 @@ class GameModel(object):
         if (not unit_can_attack(self, defender) or
                 prevents_counterattack(self, attacker, defender, target_position)):
             return []
+        defender.attacked_this_round = True
         terrain = self.tiles[attacker.position]
         terrain_bonus = (TERRAIN_DEFENSE_BONUS
                          if terrain in DEFENSIVE_TERRAINS else 0)
@@ -501,6 +544,10 @@ class GameModel(object):
             incoming_damage_multiplier_for(
                 self, attacker, defender, "counter", terrain))))
         attacker.hp -= damage
+        self.last_damage_events.append((attacker.position, damage))
+        self._clear_overextended_morale(defender)
+        defender.movement_extended = False
+        defender.movement = defender.base_movement
         events = ["{} {} counterattacked for {} damage.".format(
             self.country_name(defender.owner), defender.kind, damage),
             "{} took {} counterattack damage.".format(attacker.kind, damage)]
@@ -511,6 +558,11 @@ class GameModel(object):
             refresh_tactical_statuses(self)
             events.extend(process_kill(self, defender))
         return events
+
+    @staticmethod
+    def _clear_overextended_morale(unit):
+        unit.statuses = [status for status in unit.statuses
+                         if not isinstance(status, OverextendedMorale)]
 
     def _capture_city(self, position, country_id):
         city = self.cities.get(position)
@@ -527,206 +579,39 @@ class GameModel(object):
             if (city and self.faction_for(city["owner"]) == unit.faction and
                     unit.hp < unit.max_hp):
                 unit.hp = min(unit.max_hp, unit.hp + CITY_HEAL_PER_TURN)
-
-    def _enemy_targets(self, enemy, target_faction):
-        targets = set()
-        for unit in self.units:
-            if unit.faction == target_faction:
-                targets.add(unit.position)
-        for position, city in self.cities.items():
-            if self.faction_for(city["owner"]) == target_faction:
-                targets.add(position)
-        return sorted(targets)
+        for city in self.cities.values():
+            if (not city.get("attacked_this_round", False) and
+                    city["health"] < city["max_health"]):
+                city["health"] = min(
+                    city["max_health"], city["health"] + CITY_HEAL_PER_TURN)
+            city["attacked_this_round"] = False
 
     def _ai_recruit(self, owner_ids=None):
-        events = []
-        occupied_positions = set(self.units_by_position)
-        for owner_id, country in self.countries.items():
-            if country["faction"] == NEUTRAL:
-                continue
-            if owner_ids is None and owner_id == self.player_country_id:
-                continue
-            if owner_ids is not None and owner_id not in owner_ids:
-                continue
-            resources = country["resources"]
-            kinds = ["Tank", "Artillery", "Infantry"]
-            while True:
-                kind = next((candidate for candidate in kinds
-                             if all(resources[resource] >= amount
-                                    for resource, amount in
-                                    UNIT_TYPES[candidate]["cost"].items())), None)
-                if kind is None:
-                    break
-
-                deployments = []
-                faction = country["faction"]
-                hostile_units = [unit for unit in self.units
-                                 if unit.faction not in (faction, NEUTRAL)]
-                hostile_cities = [position for position, city in self.cities.items()
-                                  if self.faction_for(city["owner"]) not in
-                                  (faction, NEUTRAL)]
-                for city_position, city in self.cities.items():
-                    if city["owner"] != owner_id:
-                        continue
-                    if city_position in occupied_positions:
-                        continue
-                    pressure = [self.distance(city_position, unit.position)
-                                for unit in hostile_units]
-                    siege_count = sum(distance <= 1 for distance in pressure)
-                    pressure_score = sum(
-                        3 if distance <= 1 else 1 if distance <= 3 else 0
-                        for distance in pressure)
-                    front_distances = pressure or [
-                        self.distance(city_position, position)
-                        for position in hostile_cities]
-                    front_distance = min(front_distances) if front_distances else (
-                        self.columns + self.rows)
-                    city_score = (-siege_count, front_distance, -pressure_score,
-                                  city_position)
-                    deployments.append((city_score, city_position, city["name"]))
-
-                if not deployments:
-                    break
-                best_score = min(item[0][:3] for item in deployments)
-                best_deployments = [item for item in deployments
-                                    if item[0][:3] == best_score]
-                _, deployment, city_name = random.choice(best_deployments)
-                for resource, amount in UNIT_TYPES[kind]["cost"].items():
-                    resources[resource] -= amount
-                unit = Unit(kind, owner_id, deployment, faction)
-                unit.movement_left = 0
-                unit.attacks_left = 0
-                self._add_unit(unit)
-                occupied_positions.add(deployment)
-                events.append("{} recruited in {}.".format(kind, city_name))
-        return events
-
-    def _enemy_target_factors(self, enemy, targets):
-        units_by_position = self.units_by_position
-        factors = {}
-        for position in targets:
-            support = sum(
-                1 for nearby in self._positions_within(position, 2)
-                if nearby in units_by_position and
-                units_by_position[nearby] is not enemy and
-                units_by_position[nearby].faction == enemy.faction)
-            target_unit = units_by_position.get(position)
-            unit_value = (2.5 if target_unit and
-                          target_unit.faction != enemy.faction else 0.0)
-            city = self.cities.get(position)
-            city_value = 0.0
-            if city and self.faction_for(city["owner"]) != enemy.faction:
-                if city["health"] <= 0:
-                    city_value = 3.0
-                else:
-                    health_ratio = (float(city["health"]) / city["max_health"]
-                                    if city["max_health"] else 1.0)
-                    city_value = 1.0 + (1.0 - health_ratio) * 1.5
-            factors[position] = (support * 1.5, unit_value, city_value)
-        return factors
-
-    def _enemy_target_score(self, enemy, position, from_position=None,
-                            target_factors=None):
-        source = from_position if from_position is not None else enemy.position
-        distance = self.distance(source, position)
-        if target_factors is None:
-            target_factors = self._enemy_target_factors(enemy, (position,))
-        support_value, unit_value, city_value = target_factors[position]
-        return distance + support_value - unit_value - city_value
-
-    def _is_ai_attack_target(self, enemy, position):
-        defender = self.unit_at(position)
-        if defender:
-            return defender.faction not in (enemy.faction, NEUTRAL)
-        city = self.cities.get(position)
-        return (city is not None and city["health"] > 0 and
-                self.faction_for(city["owner"]) not in (enemy.faction, NEUTRAL))
-
-    def _enemy_destination_score(self, enemy, position, paths, targets,
-                                 target_factors=None):
-        units_by_position = self.units_by_position
-        if target_factors is None:
-            target_factors = self._enemy_target_factors(enemy, targets)
-        target_score = min(self._enemy_target_score(
-                               enemy, target, position, target_factors)
-                           for target in targets)
-        nearby_units = sum(
-            1 for nearby in self._positions_within(position, 1)
-            if nearby in units_by_position and
-            units_by_position[nearby] is not enemy and
-            units_by_position[nearby].faction == enemy.faction)
-        return target_score + nearby_units * 0.4, -len(paths[position]), position
-
-    @staticmethod
-    def _choose_ai_candidate(scored_candidates, tolerance=0.25):
-        best_score = min(score for score, _ in scored_candidates)
-        candidates = [candidate for score, candidate in scored_candidates
-                      if score <= best_score + tolerance]
-        return random.choice(candidates)
+        return recruit_units(self, owner_ids)
 
     def _ai_control_units(self, units, target_faction=None):
-        events = []
-        for unit in list(units):
-            if unit.faction == NEUTRAL or unit not in self.units:
-                continue
-            unit_target_faction = target_faction
-            if unit_target_faction is None:
-                unit_target_faction = (ENEMY if unit.faction == PLAYER else PLAYER)
-            while unit in self.units and not unit.attacked:
-                targets = self._enemy_targets(unit, unit_target_faction)
-                if not targets:
-                    break
-                target_factors = self._enemy_target_factors(unit, targets)
-                target_position = self._choose_ai_candidate([
-                    (self._enemy_target_score(
-                        unit, position, target_factors=target_factors), position)
-                    for position in targets])
-                paths = self.movement_paths(unit)
-                if paths:
-                    destination_scores = {
-                        position: self._enemy_destination_score(
-                            unit, position, paths, targets, target_factors)
-                        for position in paths
-                    }
-                    best_score = min(score[0]
-                                     for score in destination_scores.values())
-                    near_best = [
-                        position for position, score in destination_scores.items()
-                        if score[0] <= best_score + 0.15
-                    ]
-                    best_path_score = min(destination_scores[position][1]
-                                          for position in near_best)
-                    best_paths = [
-                        position for position in near_best
-                        if destination_scores[position][1] == best_path_score
-                    ]
-                    destination = random.choice(best_paths)
-                    current_score = self._enemy_target_score(
-                        unit, target_position, target_factors=target_factors)
-                    next_score = destination_scores[destination]
-                    if next_score[0] < current_score:
-                        moved, movement_events = self.move(unit, destination)
-                        if moved:
-                            events.extend(movement_events)
-                            continue
+        return control_units(self, units, target_faction)
 
-                attack_targets = [
-                    position for position in targets
-                    if self.distance(unit.position, position) <= unit.range and
-                    self._is_ai_attack_target(unit, position)]
-                if not attack_targets:
-                    break
-                target_position = self._choose_ai_candidate([
-                    (self._enemy_target_score(
-                        unit, position, target_factors=target_factors), position)
-                    for position in attack_targets])
-                attacked, attack_events = self.attack(unit, target_position)
-                events.extend(attack_events)
-                if not attacked or unit.attacked:
-                    break
-            if self._check_winner():
-                break
-        return events
+    def unit_maintenance_for(self, owner_id):
+        return {
+            resource: int(sum(
+                UNIT_TYPES[unit.kind]["cost"][resource] *
+                UNIT_MAINTENANCE_RATE
+                for unit in self.units
+                if unit.owner == owner_id and unit.faction != NEUTRAL))
+            for resource in ("money", "steel", "technology")
+        }
+
+    def _charge_unit_maintenance(self):
+        maintenance = {
+            country_id: self.unit_maintenance_for(country_id)
+            for country_id in self.countries
+        }
+        for country_id, costs in maintenance.items():
+            resources = self.countries[country_id]["resources"]
+            for resource, amount in costs.items():
+                resources[resource] = max(0, resources[resource] - amount)
+        return maintenance
 
     def auto_player_turn(self):
         if self.phase != PLAYER:
@@ -737,6 +622,7 @@ class GameModel(object):
                         if unit.owner == self.player_country_id]
         target_faction = ENEMY if self.player_faction == PLAYER else PLAYER
         events.extend(self._ai_control_units(player_units, target_faction))
+        events.extend(self._ai_recruit(owner_ids={self.player_country_id}))
         self.winner = self._check_winner()
         return events, self.winner
 
@@ -750,6 +636,7 @@ class GameModel(object):
         enemy_units = [unit for unit in self.units
                        if unit.owner != self.player_country_id]
         events.extend(self._ai_control_units(enemy_units))
+        events.extend(self._ai_recruit())
 
         self.winner = self._check_winner()
         if self.winner:
@@ -761,14 +648,32 @@ class GameModel(object):
             country_income = self.income_for(country_id)
             for resource, amount in country_income.items():
                 country["resources"][resource] += amount
+        maintenance = self._charge_unit_maintenance()
+        player_maintenance = {
+            resource: sum(
+                costs[resource] for country_id, costs in maintenance.items()
+                if self.faction_for(country_id) == self.player_faction)
+            for resource in ("money", "steel", "technology")
+        }
         for unit in self.units:
+            if unit.attacked_this_round:
+                unit.unattacked_rounds = 0
+            else:
+                unit.unattacked_rounds += 1
+            unit.attacked_this_round = False
+            unit.movement_extended = unit.unattacked_rounds > 2
+            unit.movement = unit.base_movement * (
+                3 if unit.movement_extended else 1)
             unit.movement_left = unit.movement
             unit.attacked = False
         advance_statuses(self)
         self._heal_garrison_units()
         self.phase = PLAYER
-        events.append("Turn {} begins. Income: +{} money, +{} steel, +{} technology.".format(
-            self.turn, income["money"], income["steel"], income["technology"]))
+        events.append("Turn {} begins. Income: +{} money, +{} steel, +{} technology; "
+                      "maintenance: -{} money, -{} steel, -{} technology.".format(
+            self.turn, income["money"], income["steel"], income["technology"],
+            player_maintenance["money"], player_maintenance["steel"],
+            player_maintenance["technology"]))
         return events, None
 
     def _check_winner(self):

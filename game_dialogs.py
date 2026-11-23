@@ -4,6 +4,7 @@ from tkinter import ttk
 from game_config import ENEMY, NEUTRAL, PLAYER, UNIT_TYPES
 from unit_effects import get_unit_skills, get_unit_statuses
 from ui_helpers import ScrollableFrame
+from i18n import LANGUAGES, LocalizedStringVar, apply_language, translate
 
 
 INK = "#202c27"
@@ -37,6 +38,7 @@ class _ModalDialog(tk.Frame):
         self.previous_grab = None
 
     def _show_modal(self):
+        apply_language(self)
         self.previous_grab = self.grab_current()
         self.update_idletasks()
         width, height = self._size
@@ -165,9 +167,9 @@ class UnitInfoDialog(_ModalDialog):
         content.pack(fill="both", expand=True)
         rows = (
             ("ATTACK", "{:g}".format(unit.effective_attack)),
-            ("RANGE", "{} hex".format(unit.range)),
-            ("STRENGTH", "{}/{} HP".format(unit.hp, unit.max_hp)),
-            ("MOVEMENT", "{} MP".format(unit.movement)),
+            ("RANGE", str(unit.range)),
+            ("STRENGTH", "{}/{}".format(unit.hp, unit.max_hp)),
+            ("MOVEMENT", str(unit.movement)),
             ("ATTACKS", "{}/{}".format(unit.attacks_left, unit.attacks_per_turn)),
         )
         if debug_mode:
@@ -206,7 +208,7 @@ class RecruitDialog(_ModalDialog):
         self.on_recruit = on_recruit
         self.kind_var = tk.StringVar(value=next(iter(UNIT_TYPES)))
         self.resources = model.countries[city["owner"]]["resources"]
-        self.status_var = tk.StringVar()
+        self.status_var = LocalizedStringVar()
 
         owner = model.country_name(city["owner"])
         self._build_header(city["name"],
@@ -321,7 +323,7 @@ class RecruitDialog(_ModalDialog):
         can_recruit = reason.startswith("Ready to deploy")
         self.status_var.set(reason)
         self.recruit_button.configure(
-            text="Recruit {}".format(kind),
+            text=translate("Recruit {}".format(kind)),
             state="normal" if can_recruit else "disabled")
 
     def _select_kind(self, kind):
@@ -342,7 +344,9 @@ class SettingsDialog(_ModalDialog):
                  resource_country_id, campaign_started, current_map_name,
                  history, debug_mode, attack_target,
                  on_resource_selected, on_choose_map, on_campaign_action,
-                 on_exit, on_attack, on_cancel_attack, on_debug_changed):
+                 on_exit, on_attack, on_cancel_attack, on_debug_changed,
+                 on_start_full_ai,
+                 language="en", on_language_changed=None):
         _ModalDialog.__init__(self, parent, "Campaign settings", 520, 390)
         self.model = model
         self.player_country_id = player_country_id
@@ -356,12 +360,15 @@ class SettingsDialog(_ModalDialog):
         self.on_attack = on_attack
         self.on_cancel_attack = on_cancel_attack
         self.on_debug_changed = on_debug_changed
+        self.on_start_full_ai = on_start_full_ai
+        self.language = language
+        self.on_language_changed = on_language_changed
         self.resource_country_var = tk.StringVar()
         self.debug_var = tk.BooleanVar(value=debug_mode)
         self.turn_var = tk.StringVar(value=str(model.turn))
-        self.phase_var = tk.StringVar()
-        self.city_count_var = tk.StringVar()
-        self.map_var = tk.StringVar(value=current_map_name)
+        self.phase_var = LocalizedStringVar()
+        self.city_count_var = LocalizedStringVar()
+        self.map_var = LocalizedStringVar(value=current_map_name)
 
         phase = ("Campaign setup" if not campaign_started else
                  "Player turn" if model.phase == PLAYER else
@@ -377,6 +384,16 @@ class SettingsDialog(_ModalDialog):
         self.scrollable.pack(fill="both", expand=True)
         content = ttk.Frame(self.scrollable.content, padding=(16, 10, 16, 12))
         content.pack(fill="both", expand=True)
+
+        language_row = ttk.Frame(content)
+        language_row.pack(fill="x", pady=(0, 8))
+        self.language_var = tk.StringVar(value=LANGUAGES.get(language, "English"))
+        ttk.Label(language_row, text="Language").pack(side="left")
+        language_choice = ttk.Combobox(
+            language_row, textvariable=self.language_var,
+            values=tuple(LANGUAGES.values()), state="readonly", width=14)
+        language_choice.pack(side="right")
+        language_choice.bind("<<ComboboxSelected>>", self._select_language)
 
         self.debug_summary = ttk.LabelFrame(
             content, text="CAMPAIGN DETAILS", padding=(10, 7))
@@ -408,6 +425,10 @@ class SettingsDialog(_ModalDialog):
 
         self.actions = ttk.Frame(content)
         self.actions.pack(fill="x")
+        self.full_ai_button = ttk.Button(
+            self.actions, text="Full AI control", style="Accent.TButton",
+            command=self._start_full_ai)
+        self.full_ai_button.pack(fill="x", pady=(0, 4))
         ttk.Button(self.actions, text="Choose map", command=self._choose_map).pack(
             fill="x", pady=(0, 4))
         if campaign_started:
@@ -455,6 +476,13 @@ class SettingsDialog(_ModalDialog):
             self.resource_country_id = country_id
             self.on_resource_selected(country_id)
 
+    def _select_language(self, event=None):
+        language = next((code for code, label in LANGUAGES.items()
+                         if label == self.language_var.get()), "en")
+        self.language = language
+        if self.on_language_changed:
+            self.on_language_changed(language)
+
     def _toggle_debug(self):
         self._apply_debug_visibility()
         self.on_debug_changed(self.debug_var.get())
@@ -468,12 +496,23 @@ class SettingsDialog(_ModalDialog):
                 self.debug_summary.pack(fill="x", pady=(0, 8), before=self.actions)
             if not self.debug_report.winfo_manager():
                 self.debug_report.pack(fill="both", expand=True, pady=(8, 0))
+            if self.campaign_started:
+                if not self.full_ai_button.winfo_manager():
+                    self.full_ai_button.pack(fill="x", pady=(0, 4),
+                                             before=self.actions.winfo_children()[1])
+            else:
+                self.full_ai_button.pack_forget()
         else:
             self.resource_label.pack_forget()
             self.resource_country_choice.pack_forget()
             self.debug_summary.pack_forget()
             self.debug_report.pack_forget()
+            self.full_ai_button.pack_forget()
         self.scrollable._update_scroll_region()
+
+    def _start_full_ai(self):
+        self.close()
+        self.on_start_full_ai()
 
     def _choose_map(self):
         self.close()

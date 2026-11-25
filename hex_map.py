@@ -244,6 +244,9 @@ class HexMapView(tk.Canvas):
                 changed.append(position)
         if not changed:
             return False
+        if any(old_cities[position][0] != new_cities[position][0]
+               for position in changed):
+            return False
         boundary_changed = False
         for city_position in changed:
             city = self.model.cities[city_position]
@@ -879,7 +882,7 @@ class HexMapView(tk.Canvas):
             is_player_unit = (unit.owner == player_country_id if player_country_id
                              else unit.faction == PLAYER)
             if (is_player_unit and getattr(self.model, "phase", None) == PLAYER and
-                    unit.movement_left > 0 and not unit.attacked):
+                    (unit.movement_left > 0 or not unit.attacked)):
                 marker_size = 4 * self.zoom
                 offset = badge + 5 * self.zoom
                 for delta_x, delta_y in ((0, -1), (1, 0), (0, 1), (-1, 0)):
@@ -1009,36 +1012,42 @@ class HexMapView(tk.Canvas):
         self.unit_animation_after_id = self.after(0, animate_frame)
         return True
 
-    def animate_damage_number(self, position, damage):
-        center_x, center_y = self._screen_center(position)
-        start_y = center_y - 10 * self.zoom
-        text = self.create_text(
-            center_x, start_y, text="-{}".format(damage),
-            fill="#f2eee2", font=("Segoe UI", max(10, int(13 * self.zoom)),
-                                  "bold"),
-            tags=("floating-damage",))
-        start_color = (242, 238, 226)
-        background_color = tuple(
-            channel // 256 for channel in self.winfo_rgb(self.cget("background")))
-        duration = 720
-        started = time.time()
-
-        def animate_frame():
+    def animate_damage_number(self, position, damage, delay=0):
+        def start_animation():
             if not self.winfo_exists():
                 return
-            progress = min(1.0, (time.time() - started) * 1000.0 / duration)
-            self.coords(text, center_x,
-                        start_y - 28 * self.zoom * progress)
-            color = "#%02x%02x%02x" % tuple(
-                int(start + (end - start) * progress)
-                for start, end in zip(start_color, background_color))
-            self.itemconfigure(text, fill=color)
-            if progress >= 1.0:
-                self.delete(text)
-                return
-            self.after(35, animate_frame)
+            center_x, center_y = self._screen_center(position)
+            start_y = center_y - 10 * self.zoom
+            text = self.create_text(
+                center_x, start_y, text="-{}".format(damage),
+                fill="#f2eee2", font=("Segoe UI", max(10, int(13 * self.zoom)),
+                                      "bold"),
+                tags=("floating-damage",))
+            start_color = (242, 238, 226)
+            background_color = tuple(
+                channel // 256 for channel in
+                self.winfo_rgb(self.cget("background")))
+            duration = 720
+            started = time.time()
 
-        self.after(0, animate_frame)
+            def animate_frame():
+                if not self.winfo_exists():
+                    return
+                progress = min(1.0, (time.time() - started) * 1000.0 / duration)
+                self.coords(text, center_x,
+                            start_y - 28 * self.zoom * progress)
+                color = "#%02x%02x%02x" % tuple(
+                    int(start + (end - start) * progress)
+                    for start, end in zip(start_color, background_color))
+                self.itemconfigure(text, fill=color)
+                if progress >= 1.0:
+                    self.delete(text)
+                    return
+                self.after(35, animate_frame)
+
+            self.after(0, animate_frame)
+
+        self.after(max(0, delay), start_animation)
         return True
 
     def _draw_selection_overlay(self):
@@ -1084,15 +1093,13 @@ class HexMapView(tk.Canvas):
                         self.selected_unit,
                         budget=self.selected_unit.base_movement))
                     base_reachable.add(self.selected_unit.position)
-                    extended_reachable = current_reachable - base_reachable
+                    self._draw_smooth_cell_boundary(
+                        current_reachable, "#df7b32", self.zoom * 4,
+                        ("selection-overlay", "move-range",
+                         "extended-move-range"))
                     self._draw_smooth_cell_boundary(
                         base_reachable, "#c08d28", self.zoom * 4,
                         ("selection-overlay", "move-range", "base-move-range"))
-                    if extended_reachable:
-                        self._draw_smooth_cell_boundary(
-                            extended_reachable, "#df7b32", self.zoom * 4,
-                            ("selection-overlay", "move-range",
-                             "extended-move-range"))
                 else:
                     self._draw_smooth_cell_boundary(
                         current_reachable, "#c08d28", self.zoom * 4,

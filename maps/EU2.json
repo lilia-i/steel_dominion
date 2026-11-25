@@ -592,7 +592,7 @@
       "Water",
       "Water",
       "Water",
-      "Plain",
+      "Forest",
       "Plain",
       "Water",
       "Water",
@@ -661,9 +661,9 @@
       "Water",
       "Water",
       "Water",
+      "Forest",
       "Plain",
       "Plain",
-      "Water",
       "Plain",
       "Water",
       "Forest",
@@ -6594,7 +6594,10 @@
         31,
         10
       ],
-      null,
+      [
+        31,
+        10
+      ],
       [
         31,
         10
@@ -19439,9 +19442,9 @@
       "row": 18,
       "name": "Brussels",
       "owner": "country_3",
-      "health": 192,
-      "max_health": 192,
-      "city_level": 4,
+      "health": 168,
+      "max_health": 168,
+      "city_level": 3,
       "industry_level": 1,
       "research_level": 1
     },
@@ -19453,8 +19456,8 @@
       "health": 192,
       "max_health": 192,
       "city_level": 4,
-      "industry_level": 1,
-      "research_level": 1
+      "industry_level": 0,
+      "research_level": 2
     },
     {
       "col": 33,
@@ -19582,9 +19585,9 @@
       "row": 57,
       "name": "Tunis",
       "owner": "country_7",
-      "health": 168,
-      "max_health": 168,
-      "city_level": 3,
+      "health": 144,
+      "max_health": 144,
+      "city_level": 2,
       "industry_level": 1,
       "research_level": 1
     },
@@ -19780,9 +19783,9 @@
       "row": 66,
       "name": "Cairo",
       "owner": "country_19",
-      "health": 216,
-      "max_health": 216,
-      "city_level": 5,
+      "health": 168,
+      "max_health": 168,
+      "city_level": 3,
       "industry_level": 1,
       "research_level": 1
     },
@@ -19791,9 +19794,9 @@
       "row": 66,
       "name": "Alexandria",
       "owner": "country_19",
-      "health": 120,
-      "max_health": 120,
-      "city_level": 1,
+      "health": 144,
+      "max_health": 144,
+      "city_level": 2,
       "industry_level": 0,
       "research_level": 0
     },
@@ -19824,9 +19827,9 @@
       "row": 60,
       "name": "Beirut",
       "owner": "allied",
-      "health": 168,
-      "max_health": 168,
-      "city_level": 3,
+      "health": 144,
+      "max_health": 144,
+      "city_level": 2,
       "industry_level": 0,
       "research_level": 0
     },
@@ -20235,12 +20238,6 @@
       "owner": "country_2"
     },
     {
-      "col": 26,
-      "row": 13,
-      "type": "Tank",
-      "owner": "country_4"
-    },
-    {
       "col": 34,
       "row": 13,
       "type": "Tank",
@@ -20331,34 +20328,10 @@
       "owner": "axis"
     },
     {
-      "col": 48,
-      "row": 44,
-      "type": "Tank",
-      "owner": "country_13"
-    },
-    {
       "col": 46,
       "row": 40,
       "type": "Infantry",
       "owner": "country_13"
-    },
-    {
-      "col": 50,
-      "row": 45,
-      "type": "Infantry",
-      "owner": "country_13"
-    },
-    {
-      "col": 41,
-      "row": 34,
-      "type": "Tank",
-      "owner": "country_14"
-    },
-    {
-      "col": 39,
-      "row": 32,
-      "type": "Artillery",
-      "owner": "country_14"
     },
     {
       "col": 48,
@@ -20395,12 +20368,6 @@
       "row": 28,
       "type": "Infantry",
       "owner": "country_5"
-    },
-    {
-      "col": 25,
-      "row": 22,
-      "type": "Infantry",
-      "owner": "country_2"
     },
     {
       "col": 22,
@@ -20452,12 +20419,6 @@
     },
     {
       "col": 24,
-      "row": 18,
-      "type": "Artillery",
-      "owner": "country_3"
-    },
-    {
-      "col": 24,
       "row": 15,
       "type": "Armored Car",
       "owner": "country_4"
@@ -20472,18 +20433,6 @@
       "col": 29,
       "row": 36,
       "type": "Tank",
-      "owner": "country_7"
-    },
-    {
-      "col": 34,
-      "row": 35,
-      "type": "Tank",
-      "owner": "country_7"
-    },
-    {
-      "col": 35,
-      "row": 33,
-      "type": "Infantry",
       "owner": "country_7"
     },
     {
@@ -20502,12 +20451,6 @@
       "col": 28,
       "row": 57,
       "type": "Infantry",
-      "owner": "country_7"
-    },
-    {
-      "col": 42,
-      "row": 46,
-      "type": "Artillery",
       "owner": "country_7"
     },
     {
@@ -20745,12 +20688,6 @@
       "owner": "country_7"
     },
     {
-      "col": 43,
-      "row": 48,
-      "type": "Armored Car",
-      "owner": "country_7"
-    },
-    {
       "col": 60,
       "row": 60,
       "type": "Infantry",
@@ -20779,12 +20716,6 @@
       "row": 54,
       "type": "Armored Car",
       "owner": "country_7"
-    },
-    {
-      "col": 27,
-      "row": 18,
-      "type": "Armored Car",
-      "owner": "country_5"
     },
     {
       "col": 33,
@@ -20875,6 +20806,78 @@
       "row": 7,
       "type": "Tank",
       "owner": "country_18"
+    },
+    {
+      "col": 34,
+      "row": 35,
+      "type": "Tank",
+      "owner": "country_5"
+    },
+    {
+      "col": 36,
+      "row": 34,
+      "type": "Armored Car",
+      "owner": "country_5"
+    },
+    {
+      "col": 37,
+      "row": 31,
+      "type": "Infantry",
+      "owner": "country_5"
+    },
+    {
+      "col": 42,
+      "row": 46,
+      "type": "Artillery",
+      "owner": "country_5"
+    },
+    {
+      "col": 43,
+      "row": 48,
+      "type": "Armored Car",
+      "owner": "country_5"
+    },
+    {
+      "col": 27,
+      "row": 18,
+      "type": "Artillery",
+      "owner": "country_5"
+    },
+    {
+      "col": 46,
+      "row": 29,
+      "type": "Tank",
+      "owner": "country_14"
+    },
+    {
+      "col": 45,
+      "row": 31,
+      "type": "Artillery",
+      "owner": "country_14"
+    },
+    {
+      "col": 53,
+      "row": 39,
+      "type": "Infantry",
+      "owner": "country_13"
+    },
+    {
+      "col": 48,
+      "row": 41,
+      "type": "Tank",
+      "owner": "country_13"
+    },
+    {
+      "col": 24,
+      "row": 18,
+      "type": "Infantry",
+      "owner": "country_3"
+    },
+    {
+      "col": 22,
+      "row": 19,
+      "type": "Infantry",
+      "owner": "country_2"
     }
   ]
 }

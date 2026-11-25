@@ -144,6 +144,19 @@ def _load_config():
         if (type(value) is not int or
                 (value <= 0 if positive else value < 0)):
             raise ValueError("config.json has an invalid {} value.".format(key))
+    for key, default in (
+            ("forced_march_multiplier", 3),
+            ("forced_march_unattacked_turns", 3)):
+        value = config.get(key, default)
+        if type(value) is not int or value <= 0:
+            raise ValueError("config.json has an invalid {} value.".format(key))
+        config[key] = value
+    animation_duration = config.get("movement_animation_duration", 0.4)
+    if (not isinstance(animation_duration, (int, float)) or
+            isinstance(animation_duration, bool) or
+            not math.isfinite(animation_duration) or animation_duration <= 0):
+        raise ValueError("config.json has an invalid movement_animation_duration value.")
+    config["movement_animation_duration"] = animation_duration
     terrain_defense_bonus = config.get("terrain_defense_bonus")
     if (not isinstance(terrain_defense_bonus, (int, float)) or
             isinstance(terrain_defense_bonus, bool)):
@@ -180,6 +193,9 @@ DEFAULT_RESOURCES = _CONFIG["default_resources"]
 PLAYER_AI_UNITS_PER_CITY_LEVEL = _CONFIG["player_ai_units_per_city_level"]
 ENEMY_AI_UNITS_PER_CITY_LEVEL = _CONFIG["enemy_ai_units_per_city_level"]
 UNIT_MAINTENANCE_RATE = _CONFIG["unit_maintenance_rate"]
+MOVEMENT_ANIMATION_DURATION = _CONFIG["movement_animation_duration"]
+FORCED_MARCH_MULTIPLIER = _CONFIG["forced_march_multiplier"]
+FORCED_MARCH_UNATTACKED_TURNS = _CONFIG["forced_march_unattacked_turns"]
 
 
 def city_hp_for_level(level):

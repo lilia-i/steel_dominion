@@ -8,6 +8,8 @@ from game_config import (
     DAMAGE_RANDOM_BONUS,
     DEFENSIVE_TERRAINS,
     ENEMY,
+    FORCED_MARCH_MULTIPLIER,
+    FORCED_MARCH_UNATTACKED_TURNS,
     MIN_DAMAGE,
     NEUTRAL,
     PLAYER,
@@ -88,7 +90,8 @@ class Unit(object):
         self.attack = TRANSPORT_STATS["attack"]
         self.range = TRANSPORT_STATS["range"]
         self.base_movement = TRANSPORT_STATS["movement"]
-        self.movement = self.base_movement * (3 if self.movement_extended else 1)
+        self.movement = self.base_movement * (
+            FORCED_MARCH_MULTIPLIER if self.movement_extended else 1)
 
     def disembark(self):
         if not self.embarked:
@@ -98,7 +101,8 @@ class Unit(object):
         self.attack = self.original_attack
         self.range = self.original_range
         self.base_movement = self.original_movement
-        self.movement = self.base_movement * (3 if self.movement_extended else 1)
+        self.movement = self.base_movement * (
+            FORCED_MARCH_MULTIPLIER if self.movement_extended else 1)
 
 
 class GameModel(object):
@@ -106,6 +110,7 @@ class GameModel(object):
         self.turn = 1
         self.phase = PLAYER
         self.winner = None
+        self.lose_on_country_elimination = False
         self.columns = 0
         self.rows = 0
         self.tiles = {}
@@ -278,12 +283,15 @@ class GameModel(object):
                 continue
             for neighbor in self.neighbors(position):
                 occupant = self.units_by_position.get(neighbor)
-                if occupant and occupant is not unit:
+                if (occupant and occupant is not unit and
+                        occupant.faction != unit.faction):
                     continue
                 city = self.cities.get(neighbor)
-                if (city and city["health"] > 0 and
-                    city["owner"] != unit.owner):
-                    continue
+                if city and city["health"] > 0:
+                    city_faction = self.faction_for(city["owner"])
+                    if (city_faction != unit.faction or
+                            city["owner"] != unit.owner):
+                        continue
 
                 current_is_water = self.tiles[position] == "Water"
                 next_is_water = self.tiles[neighbor] == "Water"
@@ -307,7 +315,8 @@ class GameModel(object):
 
         paths = {}
         for destination in best_cost:
-            if destination == unit.position:
+            if (destination == unit.position or
+                    self.unit_at(destination) is not None):
                 continue
             path = []
             position = destination
@@ -382,6 +391,15 @@ class GameModel(object):
             path = self.movement_paths(unit).get(destination)
         if not path:
             return False, ["That destination is blocked or out of movement range."]
+        if self.unit_at(destination) not in (None, unit):
+            return False, ["That destination is occupied."]
+        if any(
+                self.cities.get(position) and
+                self.cities[position]["health"] > 0 and
+                self.cities[position]["owner"] != unit.owner and
+                self.faction_for(self.cities[position]["owner"]) == unit.faction
+                for position in path):
+            return False, ["A healthy allied city blocks that route."]
 
         base_reachable = None
         if unit.movement_extended:
@@ -390,8 +408,8 @@ class GameModel(object):
         events = []
         water_transition = None
         crossed_river = False
+        previous_position = unit.position
         for position in path:
-            previous_position = unit.position
             previous_is_water = self.tiles[previous_position] == "Water"
             next_is_water = self.tiles[position] == "Water"
             if previous_is_water != next_is_water:
@@ -407,8 +425,10 @@ class GameModel(object):
                 crossed_river = True
             else:
                 unit.movement_left -= self.terrain_movement_cost(unit, self.tiles[position])
-            self._move_unit(unit, position)
-            events.extend(self._capture_city(position, unit.owner))
+            if self.unit_at(position) is None:
+                self._move_unit(unit, position)
+                events.extend(self._capture_city(position, unit.owner))
+            previous_position = position
 
         unit.movement_left = 0
         if unit.movement_extended:
@@ -467,19 +487,26 @@ class GameModel(object):
         unit_damage = damage
         if city and self.faction_for(city["owner"]) not in (attacker.faction, NEUTRAL):
             if defender:
-                city_damage = damage // 2
-                unit_damage = damage - city_damage
+                if city["health"] > 0:
+                    city_base_damage = damage // 2
+                    unit_base_damage = damage - city_base_damage
+                    city_damage = min(
+                        city["health"],
+                        max(0, int(round(
+                            city_base_damage * damage_multiplier_for(
+                                self, attacker, None, city, "city",
+                                self.tiles[target_position])))))
+                    unit_base_damage += max(
+                        0, city_base_damage - city["health"])
+                else:
+                    unit_base_damage = damage
                 unit_damage = max(MIN_DAMAGE, int(round(
-                    unit_damage * damage_multiplier_for(
-                        self, attacker, defender, hostile_city, "unit",
+                    unit_base_damage * damage_multiplier_for(
+                        self, attacker, defender, None, "unit",
                         self.tiles[target_position]) *
                     incoming_damage_multiplier_for(
                         self, defender, attacker, "unit",
                         self.tiles[target_position]))))
-                city_damage = int(round(
-                    city_damage * damage_multiplier_for(
-                        self, attacker, None, city, "city",
-                        self.tiles[target_position])))
             else:
                 city_damage = max(MIN_DAMAGE, int(round(
                     damage * damage_multiplier_for(
@@ -498,6 +525,8 @@ class GameModel(object):
                     self, defender, attacker, "unit",
                     self.tiles[target_position]))))
         damage = city_damage + unit_damage
+        if city_damage:
+            self.last_damage_events.append((target_position, city_damage))
         if defender:
             defender.hp -= unit_damage
             self.last_damage_events.append((defender.position, unit_damage))
@@ -567,8 +596,11 @@ class GameModel(object):
     def _capture_city(self, position, country_id):
         city = self.cities.get(position)
         if (not city or self.faction_for(city["owner"]) == NEUTRAL or
-            self.faction_for(country_id) == NEUTRAL or
-            self.faction_for(city["owner"]) == self.faction_for(country_id)):
+                self.faction_for(country_id) == NEUTRAL):
+            return []
+        if (city["owner"] == country_id or
+                (self.faction_for(city["owner"]) ==
+                 self.faction_for(country_id) and city["health"] > 0)):
             return []
         city["owner"] = country_id
         return ["{} captured {}.".format(self.country_name(country_id), city["name"])]
@@ -636,6 +668,9 @@ class GameModel(object):
         enemy_units = [unit for unit in self.units
                        if unit.owner != self.player_country_id]
         events.extend(self._ai_control_units(enemy_units))
+        self.winner = self._check_winner()
+        if self.winner:
+            return events, self.winner
         events.extend(self._ai_recruit())
 
         self.winner = self._check_winner()
@@ -661,9 +696,10 @@ class GameModel(object):
             else:
                 unit.unattacked_rounds += 1
             unit.attacked_this_round = False
-            unit.movement_extended = unit.unattacked_rounds > 2
+            unit.movement_extended = (
+                unit.unattacked_rounds >= FORCED_MARCH_UNATTACKED_TURNS)
             unit.movement = unit.base_movement * (
-                3 if unit.movement_extended else 1)
+                FORCED_MARCH_MULTIPLIER if unit.movement_extended else 1)
             unit.movement_left = unit.movement
             unit.attacked = False
         advance_statuses(self)
@@ -677,7 +713,11 @@ class GameModel(object):
         return events, None
 
     def _check_winner(self):
-        if self.owned_cities(self.enemy_faction) == 0:
+        if (self.lose_on_country_elimination and
+                self.owned_cities(self.player_country_id) == 0):
+            self.phase = "over"
+            self.winner = ENEMY
+        elif self.owned_cities(self.enemy_faction) == 0:
             self.phase = "over"
             self.winner = PLAYER
         elif self.owned_cities(self.player_faction) == 0:

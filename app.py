@@ -6,7 +6,8 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from game_config import ENEMY, NEUTRAL, PLAYER
+from game_config import (ENEMY, FORCED_MARCH_MULTIPLIER,
+                         MOVEMENT_ANIMATION_DURATION, NEUTRAL, PLAYER)
 from game_model import GameModel, Unit
 from app_paths import application_path
 from game_dialogs import (
@@ -114,8 +115,6 @@ class GameApp(object):
         self.maintenance_vars = {key: tk.StringVar(value="-0")
                      for key in ("money", "steel", "technology")}
         self.income_suffix_var = LocalizedStringVar(value="/turn")
-        self.debug_income_comparison = LocalizedStringVar()
-        self.debug_hp_comparison = LocalizedStringVar()
         self.game_area = tk.Frame(self.root, bg="#dfe7df")
         self.game_area.pack(fill="both", expand=True)
         self.map_view = HexMapView(
@@ -151,14 +150,18 @@ class GameApp(object):
         self.settings_button = ttk.Button(
             self.resource_strip, text="Settings", command=self._show_settings)
         self.settings_button.pack(side="right", padx=8, pady=3)
-        self.debug_comparison = tk.Frame(self.resource_strip, bg="#d9ddd5")
-        tk.Label(self.debug_comparison, textvariable=self.debug_income_comparison,
-                 bg="#d9ddd5", fg=INK, font=("Consolas", 8, "bold")).pack(
-                     anchor="e")
-        tk.Label(self.debug_comparison, textvariable=self.debug_hp_comparison,
-                 bg="#d9ddd5", fg=GREEN, font=("Consolas", 8, "bold")).pack(
-                     anchor="e")
-        self.debug_comparison.pack(side="right", padx=(0, 8))
+        self.comparison_panel = tk.Frame(
+            self.map_view, bg="#f4f3ed", padx=2, pady=2,
+            highlightthickness=1, highlightbackground="#aeb8ac")
+        self.comparison_labels = {}
+        self.comparison_bars = {}
+        for key, label in (("money", "MONEY"), ("steel", "STEEL"),
+                           ("technology", "TECH"), ("hp", "UNIT HP")):
+            self.comparison_labels[key] = label
+            bar = tk.Canvas(self.comparison_panel, width=178, height=15,
+                            bg="#e1e3df", highlightthickness=0, bd=0)
+            bar.pack(fill="x", pady=(0, 1))
+            self.comparison_bars[key] = bar
         self.auto_button = ttk.Button(
             self.root, text="Auto", command=self._auto_player_turn)
 
@@ -414,6 +417,11 @@ class GameApp(object):
 
     def _on_debug_changed(self, enabled):
         self.debug_mode = bool(enabled)
+        self.model.lose_on_country_elimination = not self.debug_mode
+        if self.campaign_started and not self.debug_mode:
+            self.model.winner = self.model._check_winner()
+            if self.model.winner:
+                self._announce_result()
         self._refresh()
 
     def _on_hex_click(self, position):
@@ -494,7 +502,8 @@ class GameApp(object):
                 self._refresh()
                 if moved and moving_unit.owner == self.player_country_id:
                     self.map_view.animate_unit_path(
-                        moving_unit.id, start_position, movement_path, 0.4)
+                        moving_unit.id, start_position, movement_path,
+                        MOVEMENT_ANIMATION_DURATION)
                 return
 
         self.selected_hex = position
@@ -597,8 +606,9 @@ class GameApp(object):
             self.message = events[-1]
         self._refresh()
         if attacked:
-            for position, damage in damage_events:
-                self.map_view.animate_damage_number(position, damage)
+            for index, (position, damage) in enumerate(damage_events):
+                self.map_view.animate_damage_number(
+                    position, damage, delay=index * 420)
 
     def _cancel_attack(self):
         self.attack_target = None
@@ -829,13 +839,20 @@ class GameApp(object):
             self.message = "Victory: all opposing cities have been captured."
             title = "Campaign victory"
         else:
-            self.message = "Defeat: all of your faction's cities have fallen."
+            self.message = ("Defeat: all of your country's cities have fallen."
+                            if not self.debug_mode else
+                            "Defeat: all of your faction's cities have fallen.")
             title = "Campaign lost"
         if self._result_was_full_ai and self._is_eu2_map():
             self._record_eu2_ai_result(self.model.winner)
         self.result_title.set(title)
-        self.result_city_vars[0].set("Player faction cities: {}".format(
-            self.model.owned_cities(self.model.player_faction)))
+        if self.debug_mode:
+            player_city_summary = "Player faction cities: {}".format(
+                self.model.owned_cities(self.model.player_faction))
+        else:
+            player_city_summary = "Your country cities: {}".format(
+                self.model.owned_cities(self.player_country_id))
+        self.result_city_vars[0].set(player_city_summary)
         self.result_city_vars[1].set("Enemy faction cities: {}".format(
             self.model.owned_cities(self.model.enemy_faction)))
         self.result_turn_var.set("Final turn: {}".format(self.model.turn))
@@ -913,6 +930,7 @@ class GameApp(object):
 
     def _reset_campaign(self, message):
         self.model = GameModel(self.map_data, self.player_country_id)
+        self.model.lose_on_country_elimination = not self.debug_mode
         self.player_country_id = self.model.player_country_id
         self.pending_player_country_id = self.player_country_id
         self.campaign_started = True
@@ -1140,6 +1158,7 @@ class GameApp(object):
                 saved = json.load(save_file)
             player_id = saved["player_country_id"]
             model = GameModel(record["data"], player_id)
+            model.lose_on_country_elimination = not self.debug_mode
             for country_id, resources in saved["countries"].items():
                 if country_id in model.countries:
                     model.countries[country_id]["resources"].update(resources)
@@ -1166,7 +1185,7 @@ class GameApp(object):
                 unit.movement = saved_unit["movement"]
                 unit.movement_extended = saved_unit.get("movement_extended", False)
                 unit.base_movement = saved_unit.get(
-                    "base_movement", unit.movement // 3
+                    "base_movement", unit.movement // FORCED_MARCH_MULTIPLIER
                     if unit.movement_extended else unit.movement)
                 unit.movement_left = saved_unit["movement_left"]
                 unit.unattacked_rounds = saved_unit.get("unattacked_rounds", 0)
@@ -1259,6 +1278,25 @@ class GameApp(object):
         self._refresh()
         return True
 
+    def _update_comparison_bar(self, key, player_value, enemy_value):
+        bar = self.comparison_bars[key]
+        bar.delete("all")
+        width = max(bar.winfo_width(), int(bar.cget("width")))
+        bar.create_text(0, 4, text=self.comparison_labels[key], anchor="w",
+                        fill=MUTED, font=("Consolas", 6, "bold"))
+        bar.create_text(width, 4,
+                        text="P {} / E {}".format(player_value, enemy_value),
+                        anchor="e", fill=INK, font=("Consolas", 6))
+        total = player_value + enemy_value
+        player_width = int(round(width * player_value / total)) if total else 0
+        if total:
+            if player_width:
+                bar.create_rectangle(0, 8, player_width, 15,
+                                     fill="#397a52", outline="")
+            if player_width < width:
+                bar.create_rectangle(player_width, 8, width, 15,
+                                     fill="#c34545", outline="")
+
     def _refresh(self):
         self.map_view.allow_low_detail_interaction = not self.campaign_started
         self.map_view.force_overview = not self.campaign_started
@@ -1283,13 +1321,10 @@ class GameApp(object):
                         if unit.faction == self.model.player_faction)
         enemy_hp = sum(unit.hp for unit in self.model.units
                        if unit.faction == self.model.enemy_faction)
-        self.debug_income_comparison.set(
-            "P/E $ {} / {} S {} / {} T {} / {}".format(
-                player_income["money"], enemy_income["money"],
-                player_income["steel"], enemy_income["steel"],
-                player_income["technology"], enemy_income["technology"]))
-        self.debug_hp_comparison.set("HP P/E {} / {}".format(
-            player_hp, enemy_hp))
+        for resource in ("money", "steel", "technology"):
+            self._update_comparison_bar(
+                resource, player_income[resource], enemy_income[resource])
+        self._update_comparison_bar("hp", player_hp, enemy_hp)
 
         city = self.model.cities.get(self.selected_hex)
         unit = self.model.unit_at(self.selected_hex)
@@ -1362,20 +1397,19 @@ class GameApp(object):
             self.map_sidebar.pack_forget()
             self.resource_strip.place(x=0, y=0, relwidth=1.0, height=36)
             if self.debug_mode:
-                self.debug_comparison.pack(side="right", padx=(0, 8),
-                                           before=self.settings_button)
+                self.comparison_panel.place(x=8, y=42, anchor="nw")
             else:
-                self.debug_comparison.pack_forget()
+                self.comparison_panel.place_forget()
             self.auto_button.place(relx=1.0, x=-8, y=40, anchor="ne")
         elif self.setup_page_active:
             self.resource_strip.place_forget()
-            self.debug_comparison.pack_forget()
+            self.comparison_panel.place_forget()
             self.auto_button.place_forget()
             if not self.map_sidebar.winfo_manager():
                 self.map_sidebar.pack(side="right", fill="y")
         else:
             self.resource_strip.place_forget()
-            self.debug_comparison.pack_forget()
+            self.comparison_panel.place_forget()
             self.auto_button.place_forget()
             self.map_sidebar.pack_forget()
         self._save_campaign()

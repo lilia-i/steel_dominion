@@ -3,10 +3,13 @@
   "city_heal_per_turn": 8,
   "city_hp_per_level": 24,
   "city_max_level": 6,
+  "movement_animation_duration": 0.4,
+  "forced_march_multiplier": 3,
+  "forced_march_unattacked_turns": 3,
   "city_production_per_level": {
-    "money": 10,
-    "steel": 4,
-    "technology": 2
+    "money": 15,
+    "steel": 6,
+    "technology": 3
   },
   "damage_random_bonus": [
     -0.15,
@@ -21,10 +24,10 @@
     "Hill",
     "Forest"
   ],
-  "enemy_ai_units_per_city_level": 1,
+  "enemy_ai_units_per_city_level": 1.5,
+  "player_ai_units_per_city_level": 0.75,
   "language": "zh",
   "min_damage": 1,
-  "player_ai_units_per_city_level": 0.7,
   "terrain_colors": {
     "Desert": "#d7bd82",
     "Forest": "#a9bda0",
@@ -58,7 +61,7 @@
         "steel": 20,
         "technology": 2
       },
-      "hp": 110,
+      "hp": 130,
       "id": "Armored Car",
       "movement": 22,
       "name_zh": "\u88c5\u7532\u8f66",
@@ -81,7 +84,7 @@
         "steel": 15,
         "technology": 10
       },
-      "hp": 90,
+      "hp": 105,
       "id": "Artillery",
       "movement": 12,
       "name_zh": "\u69b4\u5f39\u70ae",
@@ -102,7 +105,7 @@
         "steel": 0,
         "technology": 0
       },
-      "hp": 80,
+      "hp": 100,
       "id": "Infantry",
       "movement": 18,
       "name_zh": "\u6b65\u5175",
@@ -124,7 +127,7 @@
         "steel": 35,
         "technology": 5
       },
-      "hp": 150,
+      "hp": 170,
       "id": "Tank",
       "movement": 15,
       "name_zh": "\u5766\u514b",

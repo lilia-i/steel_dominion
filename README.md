@@ -158,3 +158,12 @@ Click a non-neutral country's territory and confirm the in-app prompt to start t
 - Balanced AI recruitment placement against local force strength, prioritizing outnumbered or besieged cities without prohibiting recruitment when the faction is globally ahead.
 - Added deployed-unit selection and editing, selectable layer erasing, and direct map-edge clipping that reassigns removed-city territory while preserving country data.
 - Sorted map editor country, city-territory, unit, terrain, faction, and erase-layer choices alphabetically while preserving their data mappings.
+
+### v0.7
+- Changed city assaults so city HP absorbs only the damage it can take; overflow damages the garrison, and attacks against a city with 0 HP deal all damage to its garrison. City and garrison damage numbers appear separately in sequence.
+- In normal campaigns, losing every city owned by the selected country now ends the game immediately; Debug mode retains faction-wide victory rules, and AI actions stop as soon as the result is decided.
+- Allowed movement routes through allied units without allowing occupied hexes as destinations. Allied cities with HP block entry; entering a 0-HP allied city transfers it to the moving unit's country. AI avoids routes that capture allied cities whenever a safe alternative exists.
+- Refreshed the full map after city ownership changes so territory hexes and corner patches use the new owner's colors.
+- Kept action-ready markers visible after movement when a unit still has an attack available.
+- Added a compact Debug-only map overlay comparing faction income and total unit HP.
+- Added `movement_animation_duration`, `forced_march_multiplier`, and `forced_march_unattacked_turns` configuration settings.

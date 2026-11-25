@@ -224,6 +224,16 @@ def _destination_score(model, enemy, position, paths, targets,
     return target_score, len(paths[position]), position
 
 
+def _captures_friendly_city_on_path(model, unit, path):
+    return any(
+        position in model.cities and
+        model.cities[position]["health"] <= 0 and
+        model.cities[position]["owner"] != unit.owner and
+        model.faction_for(model.cities[position]["owner"]) == unit.faction and
+        model.unit_at(position) is None
+        for position in path)
+
+
 def _choose_candidate(scored_candidates, tolerance=0.25):
     best_score = min(score for score, _ in scored_candidates)
     candidates = [candidate for score, candidate in scored_candidates
@@ -239,7 +249,7 @@ def control_units(model, units, target_faction=None):
         unit_target_faction = target_faction
         if unit_target_faction is None:
             unit_target_faction = (ENEMY if unit.faction == PLAYER else PLAYER)
-        while unit in model.units and not unit.attacked:
+        while unit in model.units and not unit.attacked and not model.winner:
             all_targets = _enemy_targets(model, unit_target_faction)
             if not all_targets:
                 break
@@ -280,6 +290,14 @@ def control_units(model, units, target_faction=None):
                         model, unit, position, paths, targets, target_factors)
                     for position in paths
                 }
+                safe_destination_scores = {
+                    position: score
+                    for position, score in destination_scores.items()
+                    if not _captures_friendly_city_on_path(
+                        model, unit, paths[position])
+                }
+                if safe_destination_scores:
+                    destination_scores = safe_destination_scores
                 best_score = min(score[0]
                                  for score in destination_scores.values())
                 near_best = [

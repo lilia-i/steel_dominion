@@ -184,6 +184,9 @@ def normalize_map_data(data, allow_invalid_territories=False):
         faction = country.get("faction")
         if faction not in (PLAYER, ENEMY, NEUTRAL):
             raise ValueError("Each country must belong to player, enemy, or neutral faction.")
+        war_entry_turn = country.get("war_entry_turn", 1)
+        if type(war_entry_turn) is not int or war_entry_turn < 1:
+            raise ValueError("Country war entry turns must be positive integers.")
         resources = country.get("resources")
         if not isinstance(resources, dict):
             raise ValueError("Each country needs its own resource balances.")
@@ -203,6 +206,7 @@ def normalize_map_data(data, allow_invalid_territories=False):
             "id": country_id,
             "name": name.strip(),
             "faction": faction,
+            "war_entry_turn": war_entry_turn,
             "color": color.lower() if color else None,
             "resources": normalized_resources,
         })

@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 
-from game_config import ENEMY, NEUTRAL, PLAYER, UNIT_TYPES
+from game_config import ENEMY, NEUTRAL, PLAYER, UNIT_TYPES, unit_level_stats
 from unit_effects import get_unit_skills, get_unit_statuses
 from ui_helpers import ScrollableFrame
 from i18n import LANGUAGES, LocalizedStringVar, apply_language, translate
@@ -101,7 +101,13 @@ class CountryChoiceDialog(_ModalDialog):
         self.country_id = country_id
         country_name = model.country_name(country_id)
         country = model.countries[country_id]
-        income = model.income_for(country_id)
+        income = {resource: 0 for resource in
+                  ("money", "steel", "technology")}
+        for city in model.cities.values():
+            if city["owner"] != country_id:
+                continue
+            for resource, amount in model.city_production(city).items():
+                income[resource] += amount
         city_count = model.owned_cities(country_id)
         unit_count = sum(1 for unit in model.units if unit.owner == country_id)
         _ModalDialog.__init__(self, parent, "Choose country", 520, 390)
@@ -200,13 +206,14 @@ class UnitInfoDialog(_ModalDialog):
 class RecruitDialog(_ModalDialog):
     def __init__(self, parent, model, city, player_country_id,
                  campaign_started, on_recruit):
-        _ModalDialog.__init__(self, parent, "Recruit units", 600, 400)
+        _ModalDialog.__init__(self, parent, "Recruit units", 600, 450)
         self.model = model
         self.city = city
         self.player_country_id = player_country_id
         self.campaign_started = campaign_started
         self.on_recruit = on_recruit
         self.kind_var = tk.StringVar(value=next(iter(UNIT_TYPES)))
+        self.level_var = tk.IntVar(value=1)
         self.resources = model.countries[city["owner"]]["resources"]
         self.status_var = LocalizedStringVar()
 
@@ -224,6 +231,8 @@ class RecruitDialog(_ModalDialog):
                                      minsize=54)
         self.kind_labels = {}
         self.kind_rows = {}
+        self.cost_labels = {}
+        self.stat_labels = {}
         for column, label in enumerate(("UNIT / COST", "ATTACK", "RANGE", "HP", "MOVE")):
             ttk.Label(selection, text=label, style="Muted.TLabel").grid(
                 row=0, column=column, sticky="w" if column == 0 else "",
@@ -258,17 +267,17 @@ class RecruitDialog(_ModalDialog):
             self.kind_labels[kind] = kind_label
             for skill in get_unit_skills(kind):
                 _effect_icon(unit_choice, skill).pack(side="left", padx=(5, 0))
-            cost_text = "Cost  Money {}  /  Steel {}  /  Tech {}".format(
-                cost["money"], cost["steel"], cost["technology"])
-            cost_label = ttk.Label(row_panel, text=cost_text, style="Muted.TLabel",
+            cost_label = ttk.Label(row_panel, style="Muted.TLabel",
                                    cursor="hand2")
             cost_label.grid(row=1, column=0, sticky="ew", padx=(24, 0),
                             pady=(1, 0))
             cost_label.bind("<Button-1>",
                             lambda event, selected_kind=kind:
                             self._select_kind(selected_kind))
+            self.cost_labels[kind] = cost_label
             values = (details["attack"], details["range"], details["hp"],
                       details["movement"])
+            value_labels = []
             for column, value in enumerate(values, start=1):
                 value_label = ttk.Label(row_panel, text=str(value),
                                         font=("Segoe UI", 11, "bold"),
@@ -278,9 +287,20 @@ class RecruitDialog(_ModalDialog):
                 value_label.bind("<Button-1>",
                                  lambda event, selected_kind=kind:
                                  self._select_kind(selected_kind))
+                value_labels.append(value_label)
+            self.stat_labels[kind] = value_labels
             if index < len(UNIT_TYPES) - 1:
                 ttk.Separator(selection).grid(row=row + 1, column=0, columnspan=5,
                                               sticky="ew", pady=(2, 0))
+
+        level_row = ttk.Frame(content)
+        level_row.pack(fill="x", pady=(2, 0))
+        ttk.Label(level_row, text="Unit level").pack(side="left", padx=(4, 8))
+        for level in (1, 2, 3):
+            ttk.Radiobutton(
+                level_row, text=str(level), value=level,
+                variable=self.level_var,
+                command=self._refresh_preview).pack(side="left", padx=3)
 
         ttk.Label(content, textvariable=self.status_var, wraplength=700,
                   style="Muted.TLabel").pack(anchor="w", pady=(0, 2))
@@ -296,12 +316,23 @@ class RecruitDialog(_ModalDialog):
 
     def _refresh_preview(self):
         kind = self.kind_var.get()
+        level = self.level_var.get()
+        selected_stats = unit_level_stats(kind, level)
         for unit_kind, label in self.kind_labels.items():
             label.configure(foreground=GREEN if unit_kind == kind else INK,
                             font=("Segoe UI", 9,
                                   "bold" if unit_kind == kind else "normal"))
-        details = UNIT_TYPES[kind]
-        cost = details["cost"]
+        for unit_kind in self.kind_labels:
+            stats = unit_level_stats(unit_kind, level)
+            cost = stats["cost"]
+            self.cost_labels[unit_kind].configure(
+                text="Cost  Money {}  /  Steel {}  /  Tech {}".format(
+                    cost["money"], cost["steel"], cost["technology"]))
+            values = (stats["attack"], UNIT_TYPES[unit_kind]["range"],
+                      stats["hp"], stats["movement"])
+            for label, value in zip(self.stat_labels[unit_kind], values):
+                label.configure(text=str(value))
+        cost = selected_stats["cost"]
         if not self.campaign_started:
             reason = "Start the campaign before recruiting units."
         elif self.model.phase != PLAYER:
@@ -331,7 +362,8 @@ class RecruitDialog(_ModalDialog):
         self._refresh_preview()
 
     def _recruit(self):
-        unit, message = self.model.recruit(self.city["position"], self.kind_var.get())
+        unit, message = self.model.recruit(
+            self.city["position"], self.kind_var.get(), self.level_var.get())
         if unit:
             self.on_recruit(unit, message)
             self.close()

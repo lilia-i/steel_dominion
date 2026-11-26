@@ -5,7 +5,7 @@ import colorsys
 
 from game_config import (NEUTRAL, PLAYER, TERRAIN_COLORS, TRANSPORT_STATS,
                          UNIT_TYPES)
-from unit_effects import morale_level_for
+from unit_effects import morale_level_for, unit_can_attack
 
 
 INK_COLOR = "#202c27"
@@ -185,7 +185,8 @@ class HexMapView(tk.Canvas):
         if isinstance(countries, dict):
             countries = countries.values()
         country_state = tuple(sorted(
-            (country["id"], country["faction"], country.get("color"))
+            (country["id"], self._country_display_faction(country["id"]),
+             country.get("color"))
             for country in countries))
         city_state = tuple(sorted(
             (position, city.get("owner"), city.get("name"),
@@ -195,10 +196,15 @@ class HexMapView(tk.Canvas):
             for position, city in self.model.cities.items()))
         return id(self.model), country_state, city_state
 
+    def _country_display_faction(self, country_id):
+        if getattr(self.model, "phase", None) == "setup":
+            return self.model.countries[country_id]["faction"]
+        return self.model.faction_for(country_id)
+
     def _unit_state_key(self):
         unit_state = tuple(sorted(
             (getattr(unit, "id", id(unit)), unit.position, unit.owner,
-             unit.kind, unit.hp, unit.max_hp,
+             unit.kind, getattr(unit, "level", 1), unit.hp, unit.max_hp,
              getattr(unit, "movement_left", None), getattr(unit, "attacked", None),
              getattr(unit, "embarked", None), self._morale_level(unit))
             for unit in self.model.units))
@@ -328,15 +334,21 @@ class HexMapView(tk.Canvas):
 
     def _create_text(self, *coordinates, **options):
         max_font_size = options.pop("max_font_size", None)
+        min_font_size = options.pop("min_font_size", None)
         item = self.create_text(*coordinates, **options)
         font = options.get("font")
         if isinstance(font, tuple) and len(font) > 1:
             self._text_fonts[item] = (
-                font[0], float(font[1]), font[2:], max_font_size)
-            if max_font_size is not None:
+                font[0], float(font[1]), font[2:],
+                max_font_size, min_font_size)
+            if max_font_size is not None or min_font_size is not None:
+                display_size = float(font[1])
+                if max_font_size is not None:
+                    display_size = min(display_size, max_font_size)
+                if min_font_size is not None:
+                    display_size = max(display_size, min_font_size)
                 self.itemconfigure(
-                    item, font=(font[0], max(1, round(min(font[1], max_font_size))),
-                                *font[2:]))
+                    item, font=(font[0], max(1, round(display_size)), *font[2:]))
         return item
 
     def _scale_item_styles(self, factor):
@@ -344,10 +356,15 @@ class HexMapView(tk.Canvas):
             if not self.type(item):
                 self._text_fonts.pop(item, None)
                 continue
-            family, size, styles, max_size = font
+            family, size, styles, max_size, min_size = font
             size *= factor
-            self._text_fonts[item] = (family, size, styles, max_size)
-            display_size = min(size, max_size) if max_size is not None else size
+            self._text_fonts[item] = (
+                family, size, styles, max_size, min_size)
+            display_size = size
+            if max_size is not None:
+                display_size = min(display_size, max_size)
+            if min_size is not None:
+                display_size = max(display_size, min_size)
             self.itemconfigure(
                 item, font=(family, max(1, round(display_size)), *styles))
 
@@ -669,7 +686,8 @@ class HexMapView(tk.Canvas):
         self._create_text(
             center_x + marker_radius + 2, center_y - 2,
             text=city["name"], fill=INK_COLOR,
-            font=("Segoe UI", 8, "bold"), max_font_size=8, anchor="w",
+            font=("Segoe UI", max(1, round(25 * self.zoom)), "bold"),
+            anchor="w",
             tags=("overview-city-label", "overview-city"))
 
     def _draw_city_detail(self, city, position, center_x, center_y):
@@ -685,12 +703,10 @@ class HexMapView(tk.Canvas):
         owner_color = self.country_mark_colors.get(city["owner"], "#777777")
         health_color = self._city_health_color(city)
 
-        name_size = max(5, min(9, int(diameter * 0.72 /
-                                      max(1, len(city["name"]) * 0.58))))
         self._create_text(
             center_x + diameter * 0.08, bar_top - 1,
             text=city["name"], fill=INK_COLOR,
-            font=("Segoe UI", name_size, "bold"), max_font_size=9,
+            font=("Segoe UI", max(1, round(9 * self.zoom)), "bold"),
             anchor="s", tags=("city-label", "city-detail"))
 
         city_tag = "{}-{}".format(*position)
@@ -716,10 +732,10 @@ class HexMapView(tk.Canvas):
             fill=owner_color, outline=INK_COLOR, width=1,
             tags=("city-detail", "city-level-badge",
                 self._city_owner_tag(position)))
-        self.create_text(
+        self._create_text(
             badge_center_x, badge_center_y,
             text=self._roman_numeral(city["city_level"]), fill="white",
-            font=("Segoe UI", max(6, int(diameter * 0.19)), "bold"),
+            font=("Segoe UI", max(1, int(diameter * 0.19)), "bold"),
             tags=("city-detail", "city-level-badge"))
 
         level_top = bar_bottom
@@ -742,18 +758,18 @@ class HexMapView(tk.Canvas):
                 fill=fill, outline=INK_COLOR, width=0.5,
                     tags=("city-detail", "city-production-level",
                         "city-level-block", level_tag))
-            self.create_text(
+            self._create_text(
                 left + level_width / 2.0, top + level_height / 2.0,
                 text=self._roman_numeral(value), fill="white",
-                    font=("Segoe UI", max(6, int(diameter * 0.1)), "bold"),
+                    font=("Segoe UI", max(1, int(diameter * 0.1)), "bold"),
                     tags=("city-detail", "city-production-level",
                         "city-level-text", level_tag))
 
         icon_x = center_x
-        house_width = diameter * 0.3
-        house_top = center_y - diameter * 0.12
-        wall_top = center_y - diameter * 0.04
-        house_bottom = center_y + diameter * 0.12
+        house_width = diameter * 0.16
+        house_top = center_y - diameter * 0.08
+        wall_top = center_y - diameter * 0.02
+        house_bottom = center_y + diameter * 0.08
         house_tag = "city-house-{}-{}".format(*position)
         self.create_polygon(
             icon_x, house_top,
@@ -764,7 +780,7 @@ class HexMapView(tk.Canvas):
             fill="#fffdf5", outline=INK_COLOR, width=0.5,
             tags=("city-marker", "city-detail", "city-house", house_tag))
         self.create_line(
-            icon_x, center_y + diameter * 0.04, icon_x, house_bottom,
+            icon_x, center_y + diameter * 0.02, icon_x, house_bottom,
             fill="#8e938f", width=max(0.5, self.zoom),
             tags=("city-marker", "city-detail", "city-house", house_tag))
 
@@ -798,7 +814,8 @@ class HexMapView(tk.Canvas):
         for index, country_id in enumerate(country_ids):
             country = countries_by_id[country_id]
             fill, mark = _country_colors(
-                index, country["faction"], country.get("color"))
+                index, self._country_display_faction(country_id),
+                country.get("color"))
             self.country_fill_colors[country_id] = fill
             self.country_mark_colors[country_id] = mark
 
@@ -863,26 +880,46 @@ class HexMapView(tk.Canvas):
             unit_tag = "unit-animation-{}".format(
                 getattr(unit, "id", id(unit)))
             center_x, center_y = self._screen_center(unit.position)
-            unit_faction = self.model.faction_for(unit.owner)
+            unit_faction = self._country_display_faction(unit.owner)
             unit_color = (self.country_mark_colors.get(unit.owner, "#777777")
                           if unit_faction != NEUTRAL else "#777777")
             mark = (TRANSPORT_STATS["symbol"] if unit.embarked else
                     UNIT_TYPES[unit.kind]["symbol"])
             badge = max(2.8, min(5.0, 5 * self.zoom))
             unit_y = center_y + 3 * self.zoom
-            self.overview_unit_items[unit_tag] = self.create_oval(
-                center_x - badge, unit_y - badge,
-                center_x + badge, unit_y + badge,
-                fill=unit_color, outline="", width=0,
-                tags=("unit-layer", "overview-unit", unit_tag))
+            if unit.level == 1:
+                overview_positions = [(center_x, unit_y, badge)]
+            elif unit.level == 2:
+                small_badge = badge * 0.68
+                offset = badge * 0.62
+                overview_positions = [
+                    (center_x - offset, unit_y, small_badge),
+                    (center_x + offset, unit_y, small_badge)]
+            else:
+                small_badge = badge * 0.58
+                overview_positions = [
+                    (center_x, unit_y - badge * 0.52, small_badge),
+                    (center_x - badge * 0.55, unit_y + badge * 0.42,
+                     small_badge),
+                    (center_x + badge * 0.55, unit_y + badge * 0.42,
+                     small_badge)]
+            self.overview_unit_items[unit_tag] = []
+            for marker_x, marker_y, marker_radius in overview_positions:
+                self.overview_unit_items[unit_tag].append(self.create_oval(
+                    marker_x - marker_radius, marker_y - marker_radius,
+                    marker_x + marker_radius, marker_y + marker_radius,
+                    fill=unit_color, outline="", width=0,
+                    tags=("unit-layer", "overview-unit", unit_tag)))
 
             unit_y = center_y + 7 * self.zoom
             badge = 12 * self.zoom
             player_country_id = getattr(self.model, "player_country_id", None)
-            is_player_unit = (unit.owner == player_country_id if player_country_id
-                             else unit.faction == PLAYER)
+            is_player_unit = (unit.owner == player_country_id and
+                              unit.faction != NEUTRAL if player_country_id
+                              else unit.faction == PLAYER)
+            has_action = getattr(unit, "movement_left", 0) > 0
             if (is_player_unit and getattr(self.model, "phase", None) == PLAYER and
-                    (unit.movement_left > 0 or not unit.attacked)):
+                    (has_action or self._has_attack_target(unit))):
                 marker_size = 4 * self.zoom
                 offset = badge + 5 * self.zoom
                 for delta_x, delta_y in ((0, -1), (1, 0), (0, 1), (-1, 0)):
@@ -907,15 +944,36 @@ class HexMapView(tk.Canvas):
                     self.create_polygon(*points, fill="#d0a44c", outline="",
                                         tags=("unit-layer", "unit-detail",
                                         "action-ready", unit_tag))
-            self.create_oval(center_x - badge, unit_y - badge,
-                             center_x + badge, unit_y + badge,
-                             fill=unit_color, outline="#fff9e9",
-                             width=max(1, self.zoom),
-                             tags=("unit-layer", "unit-detail", unit_tag))
-            self._create_text(center_x, unit_y, text=mark, fill="white",
-                              font=("Segoe UI", max(7, int(9 * self.zoom)), "bold"),
-                              max_font_size=12,
-                              tags=("unit-layer", "unit-detail", unit_tag))
+            if unit.level == 1:
+                detail_positions = [(center_x, unit_y, badge)]
+            elif unit.level == 2:
+                small_badge = badge * 0.58
+                offset = badge * 0.55
+                detail_positions = [
+                    (center_x - offset, unit_y, small_badge),
+                    (center_x + offset, unit_y, small_badge)]
+            else:
+                small_badge = badge * 0.48
+                detail_positions = [
+                    (center_x, unit_y - badge * 0.46, small_badge),
+                    (center_x - badge * 0.5, unit_y + badge * 0.4,
+                     small_badge),
+                    (center_x + badge * 0.5, unit_y + badge * 0.4,
+                     small_badge)]
+            mark_font_size = (max(7, int(9 * self.zoom)) if unit.level == 1
+                              else max(5, int(7 * self.zoom)))
+            for marker_x, marker_y, marker_radius in detail_positions:
+                self.create_oval(
+                    marker_x - marker_radius, marker_y - marker_radius,
+                    marker_x + marker_radius, marker_y + marker_radius,
+                    fill=unit_color, outline="#fff9e9",
+                    width=max(1, self.zoom),
+                    tags=("unit-layer", "unit-detail", unit_tag))
+                self._create_text(
+                    marker_x, marker_y, text=mark, fill="white",
+                    font=("Segoe UI", mark_font_size, "bold"),
+                    max_font_size=12,
+                    tags=("unit-layer", "unit-detail", unit_tag))
             morale_level = self._morale_level(unit)
             if morale_level:
                 marker_x = center_x + badge * 0.62
@@ -962,6 +1020,20 @@ class HexMapView(tk.Canvas):
         self.tag_raise("city-production-level")
         self.tag_raise("city-health-overlay")
         self.tag_raise("city-level-badge")
+
+    def _has_attack_target(self, unit):
+        if unit.attacked or not unit_can_attack(self.model, unit):
+            return False
+        for target in self.model.units:
+            if target is unit or target.faction in (unit.faction, NEUTRAL):
+                continue
+            if self.model.distance(unit.position, target.position) <= unit.range:
+                return True
+        return any(
+            city["health"] > 0 and
+            self.model.faction_for(city["owner"]) not in (unit.faction, NEUTRAL) and
+            self.model.distance(unit.position, position) <= unit.range
+            for position, city in self.model.cities.items())
 
     def animate_unit_path(self, unit_id, start_position, path, duration=0.2):
         if not path or self.unit_animation_active:
@@ -1452,14 +1524,32 @@ class HexMapView(tk.Canvas):
         for unit in self.model.units:
             unit_tag = "unit-animation-{}".format(
                 getattr(unit, "id", id(unit)))
-            item = self.overview_unit_items.get(unit_tag)
-            if item is None or not self.type(item):
+            items = self.overview_unit_items.get(unit_tag)
+            if not items:
                 continue
             center_x, center_y = self._screen_center(unit.position)
             radius = max(2.8, min(5.0, 5 * self.zoom))
             unit_y = center_y + 3 * self.zoom
-            self.coords(item, center_x - radius, unit_y - radius,
-                        center_x + radius, unit_y + radius)
+            if unit.level == 1:
+                positions = [(center_x, unit_y, radius)]
+            elif unit.level == 2:
+                small_radius = radius * 0.68
+                offset = radius * 0.62
+                positions = [(center_x - offset, unit_y, small_radius),
+                             (center_x + offset, unit_y, small_radius)]
+            else:
+                small_radius = radius * 0.58
+                positions = [(center_x, unit_y - radius * 0.52, small_radius),
+                             (center_x - radius * 0.55,
+                              unit_y + radius * 0.42, small_radius),
+                             (center_x + radius * 0.55,
+                              unit_y + radius * 0.42, small_radius)]
+            for item, (marker_x, marker_y, marker_radius) in zip(items, positions):
+                if self.type(item):
+                    self.coords(item, marker_x - marker_radius,
+                                marker_y - marker_radius,
+                                marker_x + marker_radius,
+                                marker_y + marker_radius)
 
     def _apply_zoom_styles(self):
         self._style_update_id = None

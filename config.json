@@ -7,9 +7,9 @@
   "forced_march_multiplier": 3,
   "forced_march_unattacked_turns": 3,
   "city_production_per_level": {
-    "money": 15,
-    "steel": 6,
-    "technology": 3
+    "money": 18,
+    "steel": 7,
+    "technology": 4
   },
   "damage_random_bonus": [
     -0.15,
@@ -24,8 +24,8 @@
     "Hill",
     "Forest"
   ],
-  "enemy_ai_units_per_city_level": 1.5,
-  "player_ai_units_per_city_level": 0.75,
+  "enemy_ai_units_per_city_level": 2,
+  "player_ai_units_per_city_level": 2,
   "language": "zh",
   "min_damage": 1,
   "terrain_colors": {
@@ -52,16 +52,22 @@
     "symbol": "S"
   },
   "unit_maintenance_rate": 0.07,
+  "non_participant_income_multiplier": 0.4,
+  "unit_level_multipliers": {
+    "cost": [1.0, 1.8, 2.5],
+    "hp": [1.0, 1.8, 2.7],
+    "attack": [1.0, 1.15, 1.4]
+  },
   "unit_types": {
     "Armored Car": {
-      "attack": 20,
+      "attack": 15,
       "category": "armor",
       "cost": {
         "money": 115,
         "steel": 20,
         "technology": 2
       },
-      "hp": 130,
+      "hp": 70,
       "id": "Armored Car",
       "movement": 22,
       "name_zh": "\u88c5\u7532\u8f66",
@@ -77,14 +83,14 @@
       "symbol": "A"
     },
     "Howitzer": {
-      "attack": 29,
+      "attack": 22,
       "category": "artillery",
       "cost": {
         "money": 130,
         "steel": 15,
         "technology": 10
       },
-      "hp": 105,
+      "hp": 65,
       "id": "Artillery",
       "movement": 12,
       "name_zh": "\u69b4\u5f39\u70ae",
@@ -98,14 +104,14 @@
       "symbol": "H"
     },
     "Infantry": {
-      "attack": 20,
+      "attack": 14,
       "category": "infantry",
       "cost": {
         "money": 80,
         "steel": 0,
         "technology": 0
       },
-      "hp": 100,
+      "hp": 55,
       "id": "Infantry",
       "movement": 18,
       "name_zh": "\u6b65\u5175",
@@ -120,14 +126,14 @@
       "symbol": "I"
     },
     "Tank": {
-      "attack": 27,
+      "attack": 20,
       "category": "armor",
       "cost": {
         "money": 160,
         "steel": 35,
         "technology": 5
       },
-      "hp": 170,
+      "hp": 90,
       "id": "Tank",
       "movement": 15,
       "name_zh": "\u5766\u514b",

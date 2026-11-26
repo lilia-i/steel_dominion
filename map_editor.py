@@ -91,6 +91,7 @@ class EditorMapModel(object):
 class EditorUnit(object):
     def __init__(self, kind, owner, faction, position):
         self.kind = kind
+        self.level = 1
         self.owner = owner
         self.faction = faction
         self.position = position
@@ -136,6 +137,7 @@ class MapEditorApp(object):
         self.country_name = tk.StringVar()
         self.country_faction = tk.StringVar(value=PLAYER)
         self.country_faction_display = tk.StringVar(value=translate(PLAYER))
+        self.country_war_entry_turn = tk.IntVar(value=1)
         self.country_hue = tk.DoubleVar(value=48)
         self.country_saturation = tk.DoubleVar(value=56)
         self.country_brightness = tk.DoubleVar(value=96)
@@ -327,6 +329,10 @@ class MapEditorApp(object):
         self.country_faction_choice.pack(fill="x", pady=(2, 6))
         self.country_faction_choice.bind(
             "<<ComboboxSelected>>", self._select_country_faction)
+        ttk.Label(country_form, text="Join war on turn").pack(anchor="w")
+        tk.Spinbox(country_form, from_=1, to=9999, width=8,
+                   textvariable=self.country_war_entry_turn).pack(
+                       anchor="w", pady=(2, 6))
         ttk.Label(country_form, text="Country color (HSB)").pack(anchor="w", pady=(2, 2))
         color_preview_row = ttk.Frame(country_form)
         color_preview_row.pack(fill="x", pady=(0, 4))
@@ -368,7 +374,7 @@ class MapEditorApp(object):
             map_frame, EditorMapModel(self.data), self._on_hex_click,
             bg="#dfe7df", highlightthickness=1, highlightbackground="#d2d6cd", cursor="fleur")
         self.map_view.max_zoom = 4.0
-        self.map_view.detail_threshold = 90.0
+        self.map_view.detail_threshold = 40.0
         self.map_view.allow_low_detail_interaction = True
         self.map_view.on_hex_drag = self._on_hex_drag
         self.map_view.bind("<Configure>", self._fit_initial_map, add="+")
@@ -737,6 +743,7 @@ class MapEditorApp(object):
         self.country_name.set(country["name"])
         self.country_faction.set(country["faction"])
         self.country_faction_display.set(translate(country["faction"].title()))
+        self.country_war_entry_turn.set(country.get("war_entry_turn", 1))
         for key, variable in self.country_resources.items():
             variable.set(country["resources"][key])
         index = self.country_list_ids.index(country["id"])
@@ -792,6 +799,7 @@ class MapEditorApp(object):
             "id": "country_{}".format(index),
             "name": "Country {}".format(index),
             "faction": self.country_faction.get(),
+            "war_entry_turn": 1,
             "color": self.country_color_hex.get(),
             "resources": {"money": 16, "steel": 8, "technology": 3},
         }
@@ -818,14 +826,19 @@ class MapEditorApp(object):
         try:
             resources = {key: variable.get()
                          for key, variable in self.country_resources.items()}
+            war_entry_turn = self.country_war_entry_turn.get()
         except tk.TclError:
-            self.status.set("Resource balances must be whole numbers.")
+            self.status.set("Resource balances and war entry turn must be whole numbers.")
             return
         if any(amount < 0 or amount > 999999 for amount in resources.values()):
             self.status.set("Resource balances must be from 0 to 999999.")
             return
+        if war_entry_turn < 1:
+            self.status.set("War entry turn must be at least 1.")
+            return
         country["name"] = name
         country["faction"] = self.country_faction.get()
+        country["war_entry_turn"] = war_entry_turn
         country["color"] = self.country_color_hex.get()
         country["resources"] = resources
         self._refresh_country_controls(country["id"])

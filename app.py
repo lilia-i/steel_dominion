@@ -199,6 +199,7 @@ class GameApp(object):
         self._build_map_sidebar()
         self._build_entry_page()
         self._build_result_overlay()
+        self._build_war_entry_overlay()
 
     def _build_result_overlay(self):
         self.result_overlay = tk.Frame(self.root, bg="#dfe7df")
@@ -232,6 +233,24 @@ class GameApp(object):
             command=self._close_result)
         self.result_confirm_button.pack(anchor="e", pady=(20, 0))
         self.result_overlay.place_forget()
+
+    def _build_war_entry_overlay(self):
+        self.war_entry_overlay = tk.Frame(self.root, bg="#dfe7df")
+        panel = tk.Frame(self.war_entry_overlay, bg=PAPER, padx=30, pady=26,
+                         highlightthickness=1, highlightbackground="#aeb8ac")
+        panel.place(relx=0.5, rely=0.5, anchor="center")
+        self.war_entry_title = LocalizedStringVar(value="War update")
+        self.war_entry_message = tk.StringVar(master=self.root)
+        tk.Label(panel, textvariable=self.war_entry_title, bg=PAPER, fg=INK,
+                 font=("Georgia", 20, "bold")).pack(anchor="w", pady=(0, 12))
+        tk.Label(panel, textvariable=self.war_entry_message, bg=PAPER, fg=INK,
+                 justify="left", wraplength=420,
+                 font=("Segoe UI", 12)).pack(anchor="w")
+        ttk.Button(panel, text="Confirm", style="Accent.TButton",
+                   command=self._close_war_entry_notice).pack(
+                       anchor="e", pady=(20, 0))
+        self.war_entry_overlay.place_forget()
+        self._war_entry_notice_open = False
 
     def _load_eu2_ai_stats(self):
         try:
@@ -430,7 +449,8 @@ class GameApp(object):
         if not self.campaign_started:
             if not self.setup_country_confirmed:
                 city = self.model.city_for_hex(position)
-                if city and self.model.faction_for(city["owner"]) != NEUTRAL:
+                if (city and
+                        self.model.countries[city["owner"]]["faction"] != NEUTRAL):
                     CountryChoiceDialog(
                         self.root, self.model, city["owner"],
                         self._on_setup_country_confirmed)
@@ -547,7 +567,7 @@ class GameApp(object):
 
     def _on_setup_country_confirmed(self, country_id):
         if (self.campaign_started or country_id not in self.model.countries or
-                self.model.faction_for(country_id) == NEUTRAL):
+                self.model.countries[country_id]["faction"] == NEUTRAL):
             return
         self.pending_player_country_id = country_id
         if os.path.isfile(self._save_path_for_map(self.current_map_path)):
@@ -763,6 +783,7 @@ class GameApp(object):
         self.attack_target = None
         self.message = events[-1] if events else "Enemy turn complete."
         self._refresh()
+        self._announce_war_entries(events)
         if winner:
             self._announce_result()
         elif self.full_ai_mode and not self.full_ai_paused:
@@ -784,12 +805,14 @@ class GameApp(object):
     def _run_full_ai_round(self):
         self._full_ai_after_id = None
         if (not self.full_ai_mode or self.full_ai_paused or self.ai_running or
-                not self.campaign_started or self.model.phase != PLAYER):
+                self._war_entry_notice_open or not self.campaign_started or
+                self.model.phase != PLAYER):
             return
         self._auto_player_turn()
 
     def _schedule_full_ai_round(self):
-        if self._full_ai_after_id is None:
+        if (not self._war_entry_notice_open and
+                self._full_ai_after_id is None):
             self._full_ai_after_id = self.root.after(
                 300, self._run_full_ai_round)
 
@@ -824,6 +847,24 @@ class GameApp(object):
     def _show_events(self, events):
         for event in events:
             self._log(event)
+
+    def _announce_war_entries(self, events):
+        joined_events = [event for event in events
+                         if event.endswith(" joined the war.")]
+        if not joined_events:
+            return
+        self.war_entry_message.set(
+            "\n".join(translate(event, self.language)
+                      for event in joined_events))
+        self._war_entry_notice_open = True
+        self.war_entry_overlay.place(relwidth=1.0, relheight=1.0)
+        self.war_entry_overlay.lift()
+
+    def _close_war_entry_notice(self):
+        self._war_entry_notice_open = False
+        self.war_entry_overlay.place_forget()
+        if self.full_ai_mode and not self.full_ai_paused:
+            self._schedule_full_ai_round()
 
     def _announce_result(self):
         if not self.model.winner or self.result_shown:
@@ -1091,6 +1132,7 @@ class GameApp(object):
             units.append({
                 "id": unit.id,
                 "kind": unit.kind,
+                "level": unit.level,
                 "owner": unit.owner,
                 "faction": unit.faction,
                 "position": list(unit.position),
@@ -1177,7 +1219,8 @@ class GameApp(object):
             for saved_unit in saved["units"]:
                 position = tuple(saved_unit["position"])
                 unit = Unit(saved_unit["kind"], saved_unit["owner"], position,
-                            saved_unit.get("faction"))
+                            saved_unit.get("faction"),
+                            saved_unit.get("level", 1))
                 unit.id = int(saved_unit["id"])
                 unit.hp = saved_unit["hp"]
                 unit.attack = saved_unit["attack"]

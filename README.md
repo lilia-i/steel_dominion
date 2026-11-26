@@ -163,7 +163,12 @@ Click a non-neutral country's territory and confirm the in-app prompt to start t
 - Changed city assaults so city HP absorbs only the damage it can take; overflow damages the garrison, and attacks against a city with 0 HP deal all damage to its garrison. City and garrison damage numbers appear separately in sequence.
 - In normal campaigns, losing every city owned by the selected country now ends the game immediately; Debug mode retains faction-wide victory rules, and AI actions stop as soon as the result is decided.
 - Allowed movement routes through allied units without allowing occupied hexes as destinations. Allied cities with HP block entry; entering a 0-HP allied city transfers it to the moving unit's country. AI avoids routes that capture allied cities whenever a safe alternative exists.
-- Refreshed the full map after city ownership changes so territory hexes and corner patches use the new owner's colors.
-- Kept action-ready markers visible after movement when a unit still has an attack available.
+- Shows an action-ready marker after movement only when the unit can still attack and has a valid target in range.
 - Added a compact Debug-only map overlay comparing faction income and total unit HP.
 - Added `movement_animation_duration`, `forced_march_multiplier`, and `forced_march_unattacked_turns` configuration settings.
+- Added a per-country war entry turn. Before entry, a country is neutral for AI control and combat, and its income uses the configurable `non_participant_income_multiplier`; its units and cities join their assigned faction when the turn begins. The selected player country is active from the start.
+- Added an in-game notification when a country enters the war; the notice waits for confirmation before automated turns continue.
+- Added configurable level 1¨C3 unit recruitment, with level-based cost, HP, and attack multipliers while movement remains unchanged. Unit level is saved, and older saves default to level 1.
+- Added level badges for units and cities, plus compact production-level markers; one, two, or three unit-level marks indicate the recruited unit's level.
+- Updated Auto recruitment to consider resource surplus as well as local force pressure when choosing unit level, and to fall back to an affordable lower level.
+- Added war-entry-turn editing for countries in the map editor.

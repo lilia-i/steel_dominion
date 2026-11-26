@@ -12,12 +12,15 @@ from game_config import (
     FORCED_MARCH_UNATTACKED_TURNS,
     MIN_DAMAGE,
     NEUTRAL,
+    NON_PARTICIPANT_INCOME_MULTIPLIER,
     PLAYER,
     UNIT_MAINTENANCE_RATE,
+    UNIT_LEVEL_MULTIPLIERS,
     TERRAIN_DEFENSE_BONUS,
     TERRAIN_MOVEMENT_COST,
     TRANSPORT_STATS,
     UNIT_TYPES,
+    unit_level_stats,
 )
 from game_ai import control_units, recruit_units
 from app_paths import application_path
@@ -40,22 +43,25 @@ from unit_effects import (
 class Unit(object):
     next_id = 1
 
-    def __init__(self, kind, owner, position, faction=None):
+    def __init__(self, kind, owner, position, faction=None, level=1):
         info = UNIT_TYPES[kind]
+        level_stats = unit_level_stats(kind, level)
         self.id = Unit.next_id
         Unit.next_id += 1
         self.kind = kind
+        self.level = level
+        self.level_attack_multiplier = UNIT_LEVEL_MULTIPLIERS["attack"][level - 1]
         self.original_category = info["category"]
         self.category = self.original_category
         self.owner = owner
         self.faction = faction if faction is not None else owner
         self.position = position
-        self.hp = info["hp"]
-        self.max_hp = info["hp"]
+        self.hp = level_stats["hp"]
+        self.max_hp = level_stats["hp"]
         self.original_attack = info["attack"]
         self.original_range = info["range"]
         self.original_movement = info["movement"]
-        self.attack = self.original_attack
+        self.attack = level_stats["attack"]
         self.range = self.original_range
         self.movement = self.original_movement
         self.base_movement = self.original_movement
@@ -87,7 +93,8 @@ class Unit(object):
             return
         self.embarked = True
         self.category = TRANSPORT_STATS["category"]
-        self.attack = TRANSPORT_STATS["attack"]
+        self.attack = int(round(
+            TRANSPORT_STATS["attack"] * self.level_attack_multiplier))
         self.range = TRANSPORT_STATS["range"]
         self.base_movement = TRANSPORT_STATS["movement"]
         self.movement = self.base_movement * (
@@ -98,7 +105,7 @@ class Unit(object):
             return
         self.embarked = False
         self.category = self.original_category
-        self.attack = self.original_attack
+        self.attack = unit_level_stats(self.kind, self.level)["attack"]
         self.range = self.original_range
         self.base_movement = self.original_movement
         self.movement = self.base_movement * (
@@ -121,6 +128,7 @@ class GameModel(object):
         self.units = []
         self.units_by_position = {}
         self.last_damage_events = []
+        self.player_country_id = player_country_id
         if map_data is None:
             map_path = application_path("maps", "default_map.json")
             map_data = load_map_file(map_path)
@@ -135,8 +143,9 @@ class GameModel(object):
                  if self.countries[country_id]["faction"] == PLAYER),
                 eligible_countries[0])
         self.player_country_id = player_country_id
-        self.player_faction = self.faction_for(player_country_id)
+        self.player_faction = self.countries[player_country_id]["faction"]
         self.enemy_faction = ENEMY if self.player_faction == PLAYER else PLAYER
+        self._sync_unit_factions()
 
     def can_control_unit(self, unit):
         if unit not in self.units or unit.faction == NEUTRAL:
@@ -160,6 +169,7 @@ class GameModel(object):
                 "id": country_data["id"],
                 "name": country_data["name"],
                 "faction": country_data["faction"],
+                "war_entry_turn": country_data.get("war_entry_turn", 1),
                 "color": country_data.get("color"),
                 "resources": dict(country_data["resources"]),
             }
@@ -192,7 +202,8 @@ class GameModel(object):
         for unit_data in map_data["units"]:
             country = self.countries[unit_data["owner"]]
             self._add_unit(Unit(unit_data["type"], unit_data["owner"],
-                                (unit_data["col"], unit_data["row"]), country["faction"]))
+                                (unit_data["col"], unit_data["row"]),
+                                self.faction_for(unit_data["owner"])))
 
     @property
     def resources(self):
@@ -204,7 +215,22 @@ class GameModel(object):
                     if country["faction"] == faction)
 
     def faction_for(self, country_id):
-        return self.countries[country_id]["faction"]
+        country = self.countries[country_id]
+        if (country_id != self.player_country_id and
+                country["faction"] != NEUTRAL and
+                self.turn < country["war_entry_turn"]):
+            return NEUTRAL
+        return country["faction"]
+
+    def _sync_unit_factions(self):
+        for unit in self.units:
+            unit.faction = self.faction_for(unit.owner)
+
+    def _has_future_war_entries(self, faction):
+        return any(country_id != self.player_country_id and
+                   country["faction"] == faction and
+                   self.turn < country["war_entry_turn"]
+                   for country_id, country in self.countries.items())
 
     def country_name(self, country_id):
         return self.countries[country_id]["name"]
@@ -220,8 +246,8 @@ class GameModel(object):
         self.units.append(unit)
         self.units_by_position[unit.position] = unit
 
-    def _spawn_unit(self, kind, owner, position, faction=None):
-        unit = Unit(kind, owner, position, faction)
+    def _spawn_unit(self, kind, owner, position, faction=None, level=1):
+        unit = Unit(kind, owner, position, faction, level)
         self._add_unit(unit)
         return unit
 
@@ -345,26 +371,39 @@ class GameModel(object):
 
     def income_for(self, owner):
         income = {"money": 0, "steel": 0, "technology": 0}
-        country_ids = {owner} if owner in self.countries else {
-            country_id for country_id, country in self.countries.items()
-            if country["faction"] == owner
-        }
+        if owner in self.countries:
+            country_ids = {owner}
+        else:
+            country_ids = {
+                country_id for country_id, country in self.countries.items()
+                if self.faction_for(country_id) == owner
+            }
         for city in self.cities.values():
             if city["owner"] not in country_ids:
                 continue
             production = self.city_production(city)
+            country = self.countries[city["owner"]]
+            multiplier = (
+                NON_PARTICIPANT_INCOME_MULTIPLIER
+                if country["faction"] != NEUTRAL and
+                self.faction_for(city["owner"]) == NEUTRAL else 1)
             for resource, amount in production.items():
-                income[resource] += amount
-        return income
+                income[resource] += amount * multiplier
+        return {resource: int(amount) for resource, amount in income.items()}
 
-    def recruit(self, city_position, kind):
+    def recruit(self, city_position, kind, level=1):
         city = self.cities.get(city_position)
         if (self.phase != PLAYER or not city or
-                city["owner"] != self.player_country_id):
+            city["owner"] != self.player_country_id or
+            self.faction_for(city["owner"]) == NEUTRAL):
             return None, "Select one of your cities to recruit."
         if kind not in UNIT_TYPES:
             return None, "Unknown unit type."
-        cost = UNIT_TYPES[kind]["cost"]
+        try:
+            level_stats = unit_level_stats(kind, level)
+        except ValueError:
+            return None, "Unit level must be 1, 2, or 3."
+        cost = level_stats["cost"]
         resources = self.countries[city["owner"]]["resources"]
         missing = [resource for resource, amount in cost.items()
                if resources[resource] < amount]
@@ -377,11 +416,12 @@ class GameModel(object):
         for resource, amount in cost.items():
             resources[resource] -= amount
         unit = Unit(kind, city["owner"], city_position,
-                self.faction_for(city["owner"]))
+                self.faction_for(city["owner"]), level)
         unit.movement_left = 0
         unit.attacks_left = 0
         self._add_unit(unit)
-        return unit, "{} recruited in {}.".format(kind, city["name"])
+        return unit, "Level {} {} recruited in {}.".format(
+            level, kind, city["name"])
 
     def move(self, unit, destination, path=None):
         if (not self.can_control_unit(unit) or unit.attacked or
@@ -678,6 +718,7 @@ class GameModel(object):
             return events, self.winner
 
         self.turn += 1
+        self._sync_unit_factions()
         income = self.income_for(self.player_faction)
         for country_id, country in self.countries.items():
             country_income = self.income_for(country_id)
@@ -705,6 +746,11 @@ class GameModel(object):
         advance_statuses(self)
         self._heal_garrison_units()
         self.phase = PLAYER
+        events.extend("{} joined the war.".format(country["name"])
+                  for country_id, country in self.countries.items()
+                  if country_id != self.player_country_id and
+                  country["faction"] != NEUTRAL and
+                  country["war_entry_turn"] == self.turn)
         events.append("Turn {} begins. Income: +{} money, +{} steel, +{} technology; "
                       "maintenance: -{} money, -{} steel, -{} technology.".format(
             self.turn, income["money"], income["steel"], income["technology"],
@@ -717,10 +763,12 @@ class GameModel(object):
                 self.owned_cities(self.player_country_id) == 0):
             self.phase = "over"
             self.winner = ENEMY
-        elif self.owned_cities(self.enemy_faction) == 0:
+        elif (self.owned_cities(self.enemy_faction) == 0 and
+              not self._has_future_war_entries(self.enemy_faction)):
             self.phase = "over"
             self.winner = PLAYER
-        elif self.owned_cities(self.player_faction) == 0:
+        elif (self.owned_cities(self.player_faction) == 0 and
+              not self._has_future_war_entries(self.player_faction)):
             self.phase = "over"
             self.winner = ENEMY
         return self.winner

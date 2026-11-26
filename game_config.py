@@ -151,6 +151,31 @@ def _load_config():
         if type(value) is not int or value <= 0:
             raise ValueError("config.json has an invalid {} value.".format(key))
         config[key] = value
+    level_multipliers = config.get("unit_level_multipliers", {
+        "cost": [1.0, 1.8, 2.5],
+        "hp": [1.0, 1.8, 2.7],
+        "attack": [1.0, 1.15, 1.4],
+    })
+    if not isinstance(level_multipliers, dict):
+        raise ValueError("config.json has invalid unit level multipliers.")
+    normalized_multipliers = {}
+    for stat in ("cost", "hp", "attack"):
+        values = level_multipliers.get(stat)
+        if (not isinstance(values, list) or len(values) != 3 or
+                any(not isinstance(value, (int, float)) or
+                    isinstance(value, bool) or not math.isfinite(value) or
+                    value <= 0 for value in values)):
+            raise ValueError(
+                "config.json has invalid unit level {} multipliers.".format(stat))
+        normalized_multipliers[stat] = tuple(values)
+    config["unit_level_multipliers"] = normalized_multipliers
+    income_multiplier = config.get("non_participant_income_multiplier", 0.5)
+    if (not isinstance(income_multiplier, (int, float)) or
+            isinstance(income_multiplier, bool) or
+            not math.isfinite(income_multiplier) or income_multiplier < 0):
+        raise ValueError(
+            "config.json has an invalid non_participant_income_multiplier value.")
+    config["non_participant_income_multiplier"] = income_multiplier
     animation_duration = config.get("movement_animation_duration", 0.4)
     if (not isinstance(animation_duration, (int, float)) or
             isinstance(animation_duration, bool) or
@@ -196,7 +221,30 @@ UNIT_MAINTENANCE_RATE = _CONFIG["unit_maintenance_rate"]
 MOVEMENT_ANIMATION_DURATION = _CONFIG["movement_animation_duration"]
 FORCED_MARCH_MULTIPLIER = _CONFIG["forced_march_multiplier"]
 FORCED_MARCH_UNATTACKED_TURNS = _CONFIG["forced_march_unattacked_turns"]
+NON_PARTICIPANT_INCOME_MULTIPLIER = _CONFIG[
+    "non_participant_income_multiplier"]
+UNIT_LEVEL_MULTIPLIERS = _CONFIG["unit_level_multipliers"]
 
 
 def city_hp_for_level(level):
     return min(CITY_MAX_HP, CITY_BASE_HP + (level - 1) * CITY_HP_PER_LEVEL)
+
+
+def unit_level_stats(kind, level):
+    if type(level) is not int or level not in (1, 2, 3):
+        raise ValueError("Unit level must be 1, 2, or 3.")
+    details = UNIT_TYPES[kind]
+
+    def scaled(value, multiplier):
+        return int(math.floor(value * multiplier + 0.5))
+
+    index = level - 1
+    return {
+        "cost": {
+            resource: scaled(amount, UNIT_LEVEL_MULTIPLIERS["cost"][index])
+            for resource, amount in details["cost"].items()
+        },
+        "hp": scaled(details["hp"], UNIT_LEVEL_MULTIPLIERS["hp"][index]),
+        "attack": scaled(details["attack"], UNIT_LEVEL_MULTIPLIERS["attack"][index]),
+        "movement": details["movement"],
+    }

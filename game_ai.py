@@ -7,6 +7,7 @@ from game_config import (
     ENEMY_AI_UNITS_PER_CITY_LEVEL,
     PLAYER_AI_UNITS_PER_CITY_LEVEL,
     UNIT_TYPES,
+    unit_level_stats,
 )
 
 
@@ -36,12 +37,34 @@ def _unit_strength(unit):
     return max(0.0, unit.hp) + unit.effective_attack * 2.0 + unit.range * 8.0
 
 
-def _recruit_priority(kind):
-    details = UNIT_TYPES[kind]
+def _recruit_priority(kind, level):
+    details = unit_level_stats(kind, level)
     strength = (details["hp"] + details["attack"] * 2.0 +
-                details["range"] * 8.0)
+                UNIT_TYPES[kind]["range"] * 8.0)
     cost = sum(details["cost"].values())
     return strength, cost
+
+
+def _recommended_recruit_level(model, owner_id):
+    faction = model.faction_for(owner_id)
+    pressure = max((
+        _local_force_deficit(model, faction, city_position)
+        for city_position, city in model.cities.items()
+        if city["owner"] == owner_id
+    ), default=0.0)
+    pressure_level = 3 if pressure >= 180 else 2 if pressure >= 90 else 1
+    resources = model.countries[owner_id]["resources"]
+    economic_level = 1
+    for level in (3, 2):
+        can_reserve_another = any(
+            all(resources[resource] >= amount * 2
+                for resource, amount in
+                unit_level_stats(kind, level)["cost"].items())
+            for kind in UNIT_TYPES)
+        if can_reserve_another:
+            economic_level = level
+            break
+    return max(pressure_level, economic_level)
 
 
 def _local_force_deficit(model, faction, position):
@@ -65,7 +88,7 @@ def recruit_units(model, owner_ids=None):
     events = []
     occupied_positions = set(model.units_by_position)
     for owner_id, country in model.countries.items():
-        if country["faction"] == NEUTRAL:
+        if model.faction_for(owner_id) == NEUTRAL:
             continue
         if owner_ids is None and owner_id == model.player_country_id:
             continue
@@ -80,24 +103,32 @@ def recruit_units(model, owner_ids=None):
         if owner_id != model.player_country_id:
             capacity_ratio = (
                 PLAYER_AI_UNITS_PER_CITY_LEVEL
-                if country["faction"] == model.player_faction else
+                if model.faction_for(owner_id) == model.player_faction else
                 ENEMY_AI_UNITS_PER_CITY_LEVEL)
             unit_limit = max(3, int(city_level_total * capacity_ratio))
         while True:
             if unit_limit is not None and unit_count >= unit_limit:
                 break
-            faction = country["faction"]
-            affordable_kinds = [
-                kind for kind, details in UNIT_TYPES.items()
-                if all(resources[resource] >= amount
-                       for resource, amount in details["cost"].items())]
-            if not affordable_kinds:
+            faction = model.faction_for(owner_id)
+            recommended_level = _recommended_recruit_level(model, owner_id)
+            affordable_options = []
+            for level in range(recommended_level, 0, -1):
+                affordable_options = [
+                    (kind, level)
+                    for kind in UNIT_TYPES
+                    if all(resources[resource] >= amount
+                           for resource, amount in
+                           unit_level_stats(kind, level)["cost"].items())]
+                if affordable_options:
+                    break
+            if not affordable_options:
                 break
-            best_priority = max(_recruit_priority(kind)
-                                for kind in affordable_kinds)
-            best_kinds = [kind for kind in affordable_kinds
-                          if _recruit_priority(kind) == best_priority]
-            kind = random.choice(best_kinds)
+            best_priority = max(_recruit_priority(kind, level)
+                                for kind, level in affordable_options)
+            best_options = [(kind, level)
+                            for kind, level in affordable_options
+                            if _recruit_priority(kind, level) == best_priority]
+            kind, level = random.choice(best_options)
 
             deployments = []
             hostile_units = [unit for unit in model.units
@@ -146,7 +177,7 @@ def recruit_units(model, owner_ids=None):
             _, deployment, city_name = random.choice(best_deployments)
             for resource, amount in UNIT_TYPES[kind]["cost"].items():
                 resources[resource] -= amount
-            unit = model._spawn_unit(kind, owner_id, deployment, faction)
+            unit = model._spawn_unit(kind, owner_id, deployment, faction, level)
             unit.movement_left = 0
             unit.attacks_left = 0
             occupied_positions.add(deployment)

@@ -72,9 +72,10 @@ def _load_unit_types(data):
     return unit_types
 
 
-def _load_config():
+def _load_config(config_path=None):
     try:
-        with open(application_path("config.json"), "r") as config_file:
+        path = config_path or application_path("config.json")
+        with open(path, "r", encoding="utf-8") as config_file:
             config = json.load(config_file)
     except (IOError, OSError, ValueError, TypeError) as error:
         raise RuntimeError("Unable to load required config.json: {}".format(error))
@@ -131,6 +132,19 @@ def _load_config():
             any(not isinstance(value, (int, float)) or isinstance(value, bool)
                 for value in damage_bonus)):
         raise ValueError("config.json has invalid damage random bonus.")
+    critical_hit_chance = config.get("critical_hit_chance", 0.05)
+    if (not isinstance(critical_hit_chance, (int, float)) or
+            isinstance(critical_hit_chance, bool) or
+            not math.isfinite(critical_hit_chance) or
+            not 0.0 <= critical_hit_chance <= 1.0):
+        raise ValueError("config.json has an invalid critical_hit_chance value.")
+    critical_hit_multiplier = config.get("critical_hit_multiplier", 2.0)
+    if (not isinstance(critical_hit_multiplier, (int, float)) or
+            isinstance(critical_hit_multiplier, bool) or
+            not math.isfinite(critical_hit_multiplier) or
+            critical_hit_multiplier <= 0):
+        raise ValueError(
+            "config.json has an invalid critical_hit_multiplier value.")
 
     integer_settings = {
         "min_damage": True,
@@ -208,6 +222,8 @@ DEFENSIVE_TERRAINS = _CONFIG["defensive_terrains"]
 TERRAIN_DEFENSE_BONUS = _CONFIG["terrain_defense_bonus"]
 MIN_DAMAGE = _CONFIG["min_damage"]
 DAMAGE_RANDOM_BONUS = _CONFIG["damage_random_bonus"]
+CRITICAL_HIT_CHANCE = _CONFIG["critical_hit_chance"]
+CRITICAL_HIT_MULTIPLIER = _CONFIG["critical_hit_multiplier"]
 CITY_PRODUCTION_PER_LEVEL = _CONFIG["city_production_per_level"]
 CITY_BASE_HP = _CONFIG["city_base_hp"]
 CITY_HP_PER_LEVEL = _CONFIG["city_hp_per_level"]

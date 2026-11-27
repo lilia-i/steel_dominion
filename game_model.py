@@ -5,6 +5,8 @@ import heapq
 from game_config import (
     CITY_HEAL_PER_TURN,
     CITY_PRODUCTION_PER_LEVEL,
+    CRITICAL_HIT_CHANCE,
+    CRITICAL_HIT_MULTIPLIER,
     DAMAGE_RANDOM_BONUS,
     DEFENSIVE_TERRAINS,
     ENEMY,
@@ -50,6 +52,8 @@ class Unit(object):
         Unit.next_id += 1
         self.kind = kind
         self.level = level
+        self.critical_hit_chance = CRITICAL_HIT_CHANCE
+        self.critical_hit_multiplier = CRITICAL_HIT_MULTIPLIER
         self.level_attack_multiplier = UNIT_LEVEL_MULTIPLIERS["attack"][level - 1]
         self.original_category = info["category"]
         self.category = self.original_category
@@ -203,7 +207,8 @@ class GameModel(object):
             country = self.countries[unit_data["owner"]]
             self._add_unit(Unit(unit_data["type"], unit_data["owner"],
                                 (unit_data["col"], unit_data["row"]),
-                                self.faction_for(unit_data["owner"])))
+                                self.faction_for(unit_data["owner"]),
+                                unit_data.get("level", 1)))
 
     @property
     def resources(self):
@@ -523,6 +528,10 @@ class GameModel(object):
         damage = max(MIN_DAMAGE, int(round(
             attacker.effective_attack *
             (1.0 + random.uniform(*DAMAGE_RANDOM_BONUS)) - terrain_bonus)))
+        is_critical = random.random() < attacker.critical_hit_chance
+        if is_critical:
+            damage = max(MIN_DAMAGE, int(round(
+                damage * attacker.critical_hit_multiplier)))
         city_damage = 0
         unit_damage = damage
         if city and self.faction_for(city["owner"]) not in (attacker.faction, NEUTRAL):
@@ -566,10 +575,12 @@ class GameModel(object):
                     self.tiles[target_position]))))
         damage = city_damage + unit_damage
         if city_damage:
-            self.last_damage_events.append((target_position, city_damage))
+            self.last_damage_events.append(
+                (target_position, city_damage, is_critical))
         if defender:
             defender.hp -= unit_damage
-            self.last_damage_events.append((defender.position, unit_damage))
+            self.last_damage_events.append(
+                (defender.position, unit_damage, is_critical))
         attacker.attacked = True
         attacker.unattacked_rounds = 0
         self._clear_overextended_morale(attacker)
@@ -607,13 +618,18 @@ class GameModel(object):
         damage = max(MIN_DAMAGE, int(round(
             defender.effective_attack * 0.75 *
             (1.0 + random.uniform(*DAMAGE_RANDOM_BONUS)) - terrain_bonus)))
+        is_critical = random.random() < defender.critical_hit_chance
+        if is_critical:
+            damage = max(MIN_DAMAGE, int(round(
+                damage * defender.critical_hit_multiplier)))
         damage = max(MIN_DAMAGE, int(round(
             damage * damage_multiplier_for(
                 self, defender, attacker, None, "unit", terrain) *
             incoming_damage_multiplier_for(
                 self, attacker, defender, "counter", terrain))))
         attacker.hp -= damage
-        self.last_damage_events.append((attacker.position, damage))
+        self.last_damage_events.append(
+            (attacker.position, damage, is_critical))
         self._clear_overextended_morale(defender)
         defender.movement_extended = False
         defender.movement = defender.base_movement

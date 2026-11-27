@@ -1084,7 +1084,7 @@ class HexMapView(tk.Canvas):
         self.unit_animation_after_id = self.after(0, animate_frame)
         return True
 
-    def animate_damage_number(self, position, damage, delay=0):
+    def animate_damage_number(self, position, damage, delay=0, critical=False):
         def start_animation():
             if not self.winfo_exists():
                 return
@@ -1095,7 +1095,7 @@ class HexMapView(tk.Canvas):
                 fill="#f2eee2", font=("Segoe UI", max(10, int(13 * self.zoom)),
                                       "bold"),
                 tags=("floating-damage",))
-            start_color = (242, 238, 226)
+            start_color = (229, 66, 58) if critical else (242, 238, 226)
             background_color = tuple(
                 channel // 256 for channel in
                 self.winfo_rgb(self.cget("background")))

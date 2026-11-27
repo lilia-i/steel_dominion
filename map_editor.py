@@ -10,6 +10,7 @@ from game_config import (
     TERRAIN_COLORS,
     UNIT_TYPES,
     city_hp_for_level,
+    unit_level_stats,
 )
 from hex_map import HexMapView, _country_colors
 from i18n import (
@@ -67,7 +68,7 @@ class EditorMapModel(object):
         self.countries = list(map_data["countries"])
         self.units = [
             EditorUnit(unit["type"], unit["owner"], countries[unit["owner"]]["faction"],
-                       (unit["col"], unit["row"]))
+                       (unit["col"], unit["row"]), unit.get("level", 1))
             for unit in map_data["units"]
         ]
         self.units_by_position = {unit.position: unit for unit in self.units}
@@ -89,13 +90,13 @@ class EditorMapModel(object):
 
 
 class EditorUnit(object):
-    def __init__(self, kind, owner, faction, position):
+    def __init__(self, kind, owner, faction, position, level=1):
         self.kind = kind
-        self.level = 1
+        self.level = level
         self.owner = owner
         self.faction = faction
         self.position = position
-        self.hp = UNIT_TYPES[kind]["hp"]
+        self.hp = unit_level_stats(kind, level)["hp"]
         self.max_hp = self.hp
         self.attacked = False
         self.embarked = False
@@ -130,6 +131,7 @@ class MapEditorApp(object):
         self.territory_city_var = tk.StringVar()
         self.unit_kind = tk.StringVar(value="Infantry")
         self.unit_kind_display = tk.StringVar(value=translate("Infantry"))
+        self.unit_level = tk.IntVar(value=1)
         self.unit_owner = tk.StringVar()
         self.unit_selection_var = LocalizedStringVar(value="No unit selected")
         self.erase_layer = tk.StringVar(value="Unit")
@@ -284,6 +286,13 @@ class MapEditorApp(object):
             values=self._sorted_translations(UNIT_TYPES), state="readonly")
         self.unit_choice.pack(fill="x", pady=(0, 5))
         self.unit_choice.bind("<<ComboboxSelected>>", self._select_unit_kind)
+        unit_level_row = ttk.Frame(self.unit_controls)
+        unit_level_row.pack(fill="x", pady=(0, 5))
+        ttk.Label(unit_level_row, text="Unit level").pack(side="left")
+        self.unit_level_spin = tk.Spinbox(
+            unit_level_row, from_=1, to=3, width=4,
+            textvariable=self.unit_level)
+        self.unit_level_spin.pack(side="right")
         ttk.Label(self.unit_controls, text="Starting unit country").pack(anchor="w")
         self.unit_owner_choice = ttk.Combobox(self.unit_controls, textvariable=self.unit_owner,
                                               state="readonly")
@@ -408,6 +417,7 @@ class MapEditorApp(object):
         self.research_level_spin.configure(state="normal" if self.mode.get() == "City" else "disabled")
         self.territory_choice.configure(state=territory_state)
         self.unit_choice.configure(state=unit_state)
+        self.unit_level_spin.configure(state="normal" if self.mode.get() == "Unit" else "disabled")
         self.unit_owner_choice.configure(state=unit_state)
         selected_unit_state = (
             "normal" if self.mode.get() == "Unit" and
@@ -669,10 +679,19 @@ class MapEditorApp(object):
         if owner is None:
             self.status.set("Add a country before placing starting units.")
             return
+        try:
+            level = self.unit_level.get()
+        except (tk.TclError, TypeError):
+            self.status.set("Unit level must be between 1 and 3.")
+            return
+        if not 1 <= level <= 3:
+            self.status.set("Unit level must be between 1 and 3.")
+            return
         unit["type"] = self.unit_kind.get()
         unit["owner"] = owner
-        self.unit_selection_var.set("{} at hex {}, {}".format(
-            self.unit_kind.get(), self.selected_unit_position[0] + 1,
+        unit["level"] = level
+        self.unit_selection_var.set("{} Lv.{} at hex {}, {}".format(
+            self.unit_kind.get(), level, self.selected_unit_position[0] + 1,
             self.selected_unit_position[1] + 1))
         self._replace_editor_model()
         self.status.set("Starting unit updated.")
@@ -699,11 +718,13 @@ class MapEditorApp(object):
         self.selected_unit_position = position
         self.unit_kind.set(unit["type"])
         self.unit_kind_display.set(translate(unit["type"]))
+        self.unit_level.set(unit.get("level", 1))
         country = next(item for item in self.data["countries"]
                        if item["id"] == unit["owner"])
         self.unit_owner.set(country["name"])
-        self.unit_selection_var.set("{} at hex {}, {}".format(
-            unit["type"], position[0] + 1, position[1] + 1))
+        self.unit_selection_var.set("{} Lv.{} at hex {}, {}".format(
+            unit["type"], unit.get("level", 1), position[0] + 1,
+            position[1] + 1))
         self.map_view.set_selection(position, None, None)
         self._update_tool_state()
         self.status.set("{} selected. Apply changes or delete the unit.".format(
@@ -928,6 +949,14 @@ class MapEditorApp(object):
             if not unit_owner:
                 self.status.set("Add a country before placing starting units.")
                 return
+            try:
+                level = self.unit_level.get()
+            except (tk.TclError, TypeError):
+                self.status.set("Unit level must be between 1 and 3.")
+                return
+            if not 1 <= level <= 3:
+                self.status.set("Unit level must be between 1 and 3.")
+                return
             if self.data["terrain"][row][col] == "Water":
                 self.status.set("Starting units cannot be placed on water.")
                 return
@@ -940,12 +969,14 @@ class MapEditorApp(object):
                 "row": row,
                 "type": self.unit_kind.get(),
                 "owner": unit_owner,
+                "level": level,
             })
             self.selected_unit_position = position
-            self.unit_selection_var.set("{} at hex {}, {}".format(
-                self.unit_kind.get(), col + 1, row + 1))
-            self.status.set("{} assigned to {} at hex {}, {}.".format(
-                self.unit_kind.get(), self.unit_owner.get(), col + 1, row + 1))
+            self.unit_selection_var.set("{} Lv.{} at hex {}, {}".format(
+                self.unit_kind.get(), level, col + 1, row + 1))
+            self.status.set("{} Lv.{} assigned to {} at hex {}, {}.".format(
+                self.unit_kind.get(), level, self.unit_owner.get(), col + 1,
+                row + 1))
             self._update_tool_state()
         elif self.mode.get() == "Erase":
             layer = self.erase_layer.get()

@@ -16,6 +16,7 @@ from game_dialogs import (
     SettingsDialog,
     UnitInfoDialog,
 )
+from config_database import ConfigDatabaseDialog
 from hex_map import HexMapView
 from map_editor import MapEditorApp
 from map_data import load_map_file
@@ -319,6 +320,8 @@ class GameApp(object):
                        pady=(0, 10))
         ttk.Button(actions, text="Edit map", width=24,
                    command=self._open_map_editor).pack()
+        ttk.Button(actions, text="Database", width=24,
+               command=self._open_config_database).pack(pady=(10, 0))
         self._entry_page = page
         page.place(relwidth=1, relheight=1)
         page.lift()
@@ -348,6 +351,15 @@ class GameApp(object):
         window.protocol("WM_DELETE_WINDOW", self._close_map_editor)
         self.root.withdraw()
 
+    def _open_config_database(self):
+        ConfigDatabaseDialog(self.root, self.language)
+
+    def _apply_current_language(self):
+        set_language(self.language)
+        if self._entry_page is not None:
+            self.entry_language_var.set(LANGUAGES[self.language])
+        apply_language(self.root, self.language)
+
     def _close_map_editor(self):
         if self._editor_window is not None:
             self._editor_window.destroy()
@@ -355,11 +367,13 @@ class GameApp(object):
             self._editor_app = None
         self.root.deiconify()
         self.root.lift()
+        self._apply_current_language()
 
     def _return_to_main_menu(self):
         self.setup_page_active = False
         if self._entry_page is None:
             self._build_entry_page()
+        self._apply_current_language()
         self._refresh()
         self._entry_page.lift()
 
@@ -626,9 +640,10 @@ class GameApp(object):
             self.message = events[-1]
         self._refresh()
         if attacked:
-            for index, (position, damage) in enumerate(damage_events):
+            for index, (position, damage, is_critical) in enumerate(damage_events):
                 self.map_view.animate_damage_number(
-                    position, damage, delay=index * 420)
+                    position, damage, delay=index * 420,
+                    critical=is_critical)
 
     def _cancel_attack(self):
         self.attack_target = None

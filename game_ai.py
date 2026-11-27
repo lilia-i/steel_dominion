@@ -45,26 +45,31 @@ def _recruit_priority(kind, level):
     return strength, cost
 
 
-def _recommended_recruit_level(model, owner_id):
+def _recruit_level_weights(model, owner_id, affordable_by_level):
     faction = model.faction_for(owner_id)
     pressure = max((
         _local_force_deficit(model, faction, city_position)
         for city_position, city in model.cities.items()
         if city["owner"] == owner_id
     ), default=0.0)
-    pressure_level = 3 if pressure >= 180 else 2 if pressure >= 90 else 1
+    pressure_ratio = max(-1.0, min(1.0, pressure / 180.0))
     resources = model.countries[owner_id]["resources"]
-    economic_level = 1
-    for level in (3, 2):
-        can_reserve_another = any(
-            all(resources[resource] >= amount * 2
-                for resource, amount in
-                unit_level_stats(kind, level)["cost"].items())
-            for kind in UNIT_TYPES)
-        if can_reserve_another:
-            economic_level = level
-            break
-    return max(pressure_level, economic_level)
+    base_weights = {1: 0.5, 2: 0.3, 3: 0.2}
+    weights = []
+    for level in sorted(affordable_by_level):
+        best_reserve = 1
+        for kind, _ in affordable_by_level[level]:
+            costs = unit_level_stats(kind, level)["cost"]
+            resource_reserve = min((
+                resources[resource] // amount
+                for resource, amount in costs.items() if amount > 0
+            ), default=3)
+            best_reserve = max(best_reserve, resource_reserve)
+        reserve_bonus = 1.0 + min(2, best_reserve - 1) * 0.4 * (level - 1) / 2.0
+        pressure_bonus = max(
+            0.25, 1.0 + pressure_ratio * (level - 2) * 0.5)
+        weights.append(base_weights[level] * reserve_bonus * pressure_bonus)
+    return weights
 
 
 def _local_force_deficit(model, faction, position):
@@ -110,9 +115,8 @@ def recruit_units(model, owner_ids=None):
             if unit_limit is not None and unit_count >= unit_limit:
                 break
             faction = model.faction_for(owner_id)
-            recommended_level = _recommended_recruit_level(model, owner_id)
-            affordable_options = []
-            for level in range(recommended_level, 0, -1):
+            affordable_by_level = {}
+            for level in (1, 2, 3):
                 affordable_options = [
                     (kind, level)
                     for kind in UNIT_TYPES
@@ -120,9 +124,14 @@ def recruit_units(model, owner_ids=None):
                            for resource, amount in
                            unit_level_stats(kind, level)["cost"].items())]
                 if affordable_options:
-                    break
-            if not affordable_options:
+                    affordable_by_level[level] = affordable_options
+            if not affordable_by_level:
                 break
+            levels = sorted(affordable_by_level)
+            weights = _recruit_level_weights(
+                model, owner_id, affordable_by_level)
+            level = random.choices(levels, weights=weights, k=1)[0]
+            affordable_options = affordable_by_level[level]
             best_priority = max(_recruit_priority(kind, level)
                                 for kind, level in affordable_options)
             best_options = [(kind, level)

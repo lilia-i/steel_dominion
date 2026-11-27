@@ -28,7 +28,7 @@ py -3.6 -m pip install PyInstaller==4.10
 .\build_portable.ps1
 ```
 
-The output is `dist/SteelDominion/`; keep the whole folder together when moving it. Python 3.6's PyInstaller places runtime files beside the executable rather than in `_internal/`. Edit `maps/` and `config.json` beside the executable. `config.json` is required at startup and is the authoritative source for unit, transport, terrain, resource, city, and combat values; missing or invalid required settings produce a configuration error instead of falling back to duplicate Python defaults.
+The output is `dist/SteelDominion.exe` with `maps/`, `config.json`, and `saves/` beside it. Keep these together when moving the game. The executable bundles Python and its runtime dependencies; maps and configuration remain editable external data. Existing data in the previous `dist/SteelDominion/` folder initializes the new layout only when the corresponding data is not already beside the executable. The build first creates the executable in a staging directory and replaces the published executable only after PyInstaller succeeds. After a successful build, the obsolete onedir output and PyInstaller intermediates are removed. `config.json` is required at startup and is the authoritative source for unit, transport, terrain, resource, city, and combat values; missing or invalid required settings produce a configuration error instead of falling back to duplicate Python defaults.
 
 Add custom unit types directly under `unit_types`. Give each entry a stable `id`; maps and saves use this ID, so keep it unchanged when renaming the unit. The entry key or `name_en` is the English display name, and optional `name_zh` sets the Chinese display name. Display names may contain spaces. Each entry also needs a category, one-character `symbol`, a `cost` with `money`, `steel`, and `technology`, plus positive integer `attack`, `range`, `hp`, and `movement` values. For example:
 
@@ -172,3 +172,9 @@ Click a non-neutral country's territory and confirm the in-app prompt to start t
 - Added level badges for units and cities, plus compact production-level markers; one, two, or three unit-level marks indicate the recruited unit's level.
 - Updated Auto recruitment to consider resource surplus as well as local force pressure when choosing unit level, and to fall back to an affordable lower level.
 - Added war-entry-turn editing for countries in the map editor.
+
+### v1.0
+- Added a localized configuration database to the main menu, grouping gameplay values by category and presenting each unit type in its own editor. Unit types can be added or removed; changes are validated before saving and take effect after restart.
+- Added configurable critical hits for attacks and counterattacks, with adjustable chance and damage multiplier; critical damage is highlighted in red.
+- Let the map editor set starting-unit levels from 1 to 3. Map data validates and preserves the level, and older maps default to level 1.
+- Updated AI recruitment to weight affordable unit levels using resource reserves and local force pressure, rather than always selecting the highest affordable level.

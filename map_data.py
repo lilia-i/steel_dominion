@@ -341,11 +341,15 @@ def normalize_map_data(data, allow_invalid_territories=False):
         kind = unit.get("type")
         if kind not in UNIT_TYPES:
             raise ValueError("Starting unit type is unknown.")
+        level = unit.get("level", 1)
+        if type(level) is not int or not 1 <= level <= 3:
+            raise ValueError("Starting unit level must be between 1 and 3.")
         owner = unit.get("owner")
         if owner not in country_ids:
             raise ValueError("Each starting unit must belong to an existing country.")
         unit_positions.add(position)
-        normalized_units.append({"col": col, "row": row, "type": kind, "owner": owner})
+        normalized_units.append({"col": col, "row": row, "type": kind,
+                                 "owner": owner, "level": level})
 
     return {
         "version": MAP_FORMAT_VERSION,
